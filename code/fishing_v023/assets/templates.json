@@ -1,0 +1,68 @@
+[
+  {
+    "name": "title",
+    "file": "title.png",
+    "rect": [
+      211,
+      12,
+      163,
+      47
+    ],
+    "pad": 32
+  },
+  {
+    "name": "bite",
+    "file": "bite.png",
+    "rect": [
+      204,
+      635,
+      181,
+      28
+    ],
+    "pad": 30
+  },
+  {
+    "name": "loot",
+    "file": "loot.png",
+    "rect": [
+      151,
+      123,
+      287,
+      68
+    ],
+    "pad": 10
+  },
+  {
+    "name": "record",
+    "file": "record.png",
+    "rect": [
+      151,
+      151,
+      300,
+      55
+    ],
+    "pad": 10
+  },
+  {
+    "name": "bar",
+    "file": "bar.png",
+    "rect": [
+      432,
+      680,
+      33,
+      51
+    ],
+    "pad": 14
+  },
+  {
+    "name": "x1",
+    "file": "x1.png",
+    "rect": [
+      386,
+      789,
+      27,
+      29
+    ],
+    "pad": 16
+  }
+]

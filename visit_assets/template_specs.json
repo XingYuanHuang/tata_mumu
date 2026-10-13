@@ -1,0 +1,132 @@
+[
+  {
+    "name": "search_icon",
+    "threshold": 0.89,
+    "box": [
+      516,
+      516,
+      548,
+      550
+    ]
+  },
+  {
+    "name": "results_title",
+    "threshold": 0.88,
+    "box": [
+      235,
+      575,
+      352,
+      602
+    ]
+  },
+  {
+    "name": "suggest_title",
+    "threshold": 0.89,
+    "box": [
+      202,
+      575,
+      384,
+      602
+    ]
+  },
+  {
+    "name": "visit",
+    "threshold": 0.89,
+    "box": [
+      127,
+      998,
+      193,
+      1032
+    ]
+  },
+  {
+    "name": "choice_title",
+    "threshold": 0.89,
+    "box": [
+      245,
+      704,
+      341,
+      731
+    ]
+  },
+  {
+    "name": "choose_button",
+    "threshold": 0.88,
+    "box": [
+      130,
+      901,
+      198,
+      936
+    ]
+  },
+  {
+    "name": "best_title",
+    "threshold": 0.89,
+    "box": [
+      222,
+      704,
+      365,
+      731
+    ]
+  },
+  {
+    "name": "ok",
+    "threshold": 0.89,
+    "box": [
+      254,
+      910,
+      319,
+      946
+    ]
+  },
+  {
+    "name": "honors",
+    "threshold": 0.88,
+    "box": [
+      221,
+      18,
+      366,
+      65
+    ]
+  },
+  {
+    "name": "thumb",
+    "threshold": 0.89,
+    "box": [
+      501,
+      831,
+      546,
+      876
+    ]
+  },
+  {
+    "name": "empty_flag",
+    "threshold": 0.88,
+    "box": [
+      239,
+      438,
+      273,
+      483
+    ]
+  },
+  {
+    "name": "close",
+    "threshold": 0.88,
+    "box": [
+      275,
+      984,
+      310,
+      1017
+    ]
+  },
+  {
+    "name": "gift",
+    "threshold": 0.87,
+    "box": [
+      38,
+      41,
+      111,
+      112
+    ]
+  }
+]

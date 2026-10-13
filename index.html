@@ -1,0 +1,673 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>巡访助手 - 群消息监控 + 多实例巡访</title>
+<style>
+:root{font-family:"Segoe UI","Microsoft YaHei UI","Microsoft YaHei",sans-serif;color:#252338;background:#f5f4fa;font-size:14px;--purple:#7056da;--border:#e5e2ed;--muted:#817b91;--green:#16815e;--red:#b64457;--orange:#a77316;--dark:#242333}
+*{box-sizing:border-box}body{margin:0}
+button,input,select,textarea{font:inherit}
+button{cursor:pointer;border:1px solid var(--border);border-radius:9px;padding:8px 15px;background:white;color:#393347;transition:background .15s,transform .1s}
+button:hover{background:#f0ecff}button:active{transform:translateY(1px)}button:disabled{cursor:default;opacity:.44;transform:none}
+.primary{background:var(--purple);color:white;border-color:var(--purple);font-weight:600}.primary:hover{background:#5e44c3}
+.danger{color:var(--red);background:#fff5f6;border-color:#edccd2}
+.quiet{background:transparent;border:0;padding:6px 10px;color:var(--muted)}
+input,select,textarea{border:1px solid var(--border);border-radius:8px;background:white;padding:8px 11px;color:#393347;outline:none}
+input:focus,select:focus,textarea:focus{border-color:#a88bf0;box-shadow:0 0 0 3px #ede7fc}
+input[type=checkbox]{accent-color:var(--purple);width:16px;height:16px;vertical-align:middle}
+input[type=number]{width:80px}
+.role-select{padding:4px 8px;font-size:13px;border-radius:6px}
+.role-select option{background:white}
+a{color:var(--purple)}
+header{max-width:1400px;margin:0 auto;padding:25px 30px 17px;display:flex;align-items:center;justify-content:space-between}
+.brand{display:flex;align-items:center;gap:13px}
+.logo{background:var(--purple);color:#fff;font-size:24px;font-weight:800;border-radius:15px;width:48px;height:48px;display:grid;place-items:center;box-shadow:0 6px 15px #7056da25}
+h1{font-size:22px;line-height:1.3;margin:0;letter-spacing:.4px}
+header p{margin:5px 0 0;color:var(--muted);font-size:13px}
+.version{font-size:11px;font-weight:500;color:#9c94ad;margin-left:8px}
+main{max-width:1400px;margin:0 auto;padding:0 30px 30px}
+.notice{padding:12px 15px;border:1px solid #e1d6fa;background:#f0eafb;border-radius:11px;font-size:13px;line-height:1.7;margin:0 0 17px}
+.notice strong{color:#6246b3}
+.grid{display:grid;grid-template-columns:minmax(540px,1fr) 380px;gap:20px;align-items:start}
+.left,.right{display:flex;flex-direction:column;gap:15px}
+.card{background:white;border:1px solid var(--border);border-radius:14px;padding:19px 20px;box-shadow:0 2px 4px #2e1b5003}
+.card h2{font-size:15px;margin:0 0 13px;display:flex;align-items:center;gap:9px}
+.step{display:inline-grid;place-items:center;width:22px;height:22px;border-radius:7px;background:#f0ebfc;color:var(--purple);font-size:12px}
+.row{display:flex;gap:9px;align-items:center;flex-wrap:wrap}
+.grow{flex:1;min-width:170px}
+.hint{font-size:12px;color:var(--muted);line-height:1.7;margin:9px 0 0}
+.stats{display:grid;grid-template-columns:repeat(5,1fr);gap:8px;margin-bottom:15px}
+.stat{border:1px solid var(--border);border-radius:10px;padding:10px 12px}
+.stat span{display:block;color:var(--muted);font-size:11px;margin-bottom:5px}
+.stat strong{font-size:20px;font-weight:650}
+.stat.success strong{color:var(--green)}
+.stat.error strong{color:var(--red)}
+.stat.pending strong{color:var(--orange)}
+.statusline{margin:13px 0 7px;display:flex;gap:8px;align-items:center;justify-content:space-between;font-size:12px;color:#756982}
+.statusline b{font-weight:550;word-break:break-word}
+.progress{height:5px;border-radius:9px;background:#eeeaf5;overflow:hidden}
+.progress div{background:var(--purple);height:100%;width:0;transition:width .2s}
+.pill{font-size:11px;padding:4px 9px;border-radius:10px;background:#eeeaf5;color:#81738f}
+.pill.on{background:#e7f7ef;color:var(--green)}
+.pill.off{background:#f5e8ea;color:var(--red)}
+.inst-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:10px}
+.inst-card{border:1px solid var(--border);border-radius:10px;padding:12px;text-align:center}
+.inst-card .inst-name{font-size:13px;font-weight:bold;margin-bottom:6px}
+.inst-card .inst-role{font-size:10px;padding:2px 8px;border-radius:4px;display:inline-block;margin-bottom:6px}
+.role-main{background:#dbeafe;color:#1e40af}
+.role-worker{background:#ede9fe;color:#6d28d9}
+.inst-card .inst-conn{font-size:11px;margin-top:4px}
+.dot{width:8px;height:8px;border-radius:50%;display:inline-block;margin-right:4px}
+.dot-on{background:var(--green)}.dot-off{background:var(--red)}
+.msg-list{max-height:200px;overflow:auto}
+.msg-item{padding:6px 10px;margin-bottom:4px;border-radius:6px;font-size:12px;display:flex;gap:8px;align-items:center;border-left:3px solid #ddd}
+.msg-item.hit{border-left-color:var(--orange);background:#fffbf0}
+.msg-item .msg-platform{font-size:10px;padding:1px 5px;border-radius:3px;font-weight:bold}
+.p-wechat{background:#e7f7ef;color:var(--green)}
+.p-qq{background:#dbeafe;color:#2563eb}
+.p-sync{background:#ede9fe;color:#7c3aed}
+.msg-item .msg-time{font-size:10px;color:var(--muted);margin-left:auto;white-space:nowrap}
+.hit-badge{background:var(--orange);color:#fff;font-size:10px;padding:1px 6px;border-radius:4px;font-weight:bold}
+.task-list{max-height:400px;overflow:auto}
+.task-item{border:1px solid var(--border);border-radius:10px;padding:10px 14px;margin-bottom:8px}
+.task-item .task-top{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.task-item .digit-id{font-size:17px;font-weight:bold;color:var(--purple);font-family:Consolas,monospace;min-width:145px}
+.task-item .task-src{font-size:11px;padding:2px 7px;border-radius:4px;font-weight:bold}
+.src-wechat{background:#e7f7ef;color:var(--green)}
+.src-qq{background:#dbeafe;color:#2563eb}
+.src-excel{background:#fef3e7;color:var(--orange)}
+.src-sync{background:#ede9fe;color:#7c3aed}
+.task-item .task-ch{font-size:10px;padding:2px 6px;border-radius:3px;background:#f0ecfa;color:#79639f}
+.task-item .task-st{font-size:11px;padding:3px 10px;border-radius:4px;font-weight:bold}
+.st-pending{background:#fef3e7;color:var(--orange)}
+.st-running{background:#dbeafe;color:#2563eb;animation:pulse 1s infinite}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.6}}
+.st-done{background:#e7f7ef;color:var(--green)}
+.st-error{background:#f5e8ea;color:var(--red)}
+.task-item .task-exec{font-size:11px;color:var(--muted);margin-top:5px}
+.task-item .task-visit{font-size:11px;color:var(--muted);margin-top:3px;line-height:1.5}
+.task-item .task-time{font-size:10px;color:#a69cae;margin-top:4px}
+.log-box{font:11px/1.75 "Microsoft YaHei",Consolas,monospace;max-height:180px;overflow:auto;white-space:pre-wrap;color:#80758c;word-break:break-all}
+.empty{text-align:center;color:#a599b1;padding:25px 0;font-size:13px}
+.preview{background:var(--dark);border-radius:10px;overflow:hidden;min-height:160px;display:flex;align-items:center;justify-content:center}
+.preview-empty{color:#aaa3c1;line-height:1.8;font-size:13px;text-align:center}
+footer{font-size:11px;color:#a59aaf;text-align:center;padding:4px 10px 24px}
+@media(max-width:970px){.grid{grid-template-columns:1fr}.stats{grid-template-columns:repeat(3,1fr)}.inst-grid{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+<header>
+  <div class="brand">
+    <div class="logo">M</div>
+    <div>
+      <h1>巡访助手 <span class="version">群消息监控 + 多实例巡访 / 0.3</span></h1>
+      <p>微信群/QQ群消息 → UID自动识别 → MuMu多实例巡访领礼包</p>
+    </div>
+  </div>
+  <div class="row">
+    <button class="primary" id="btn-detect" onclick="autoDetect()">自动检测环境</button>
+    <button class="quiet" id="btn-adb" onclick="connectADB()">连接全部ADB</button>
+    <button class="danger" id="btn-stop-all" onclick="stopAll()" disabled>停止全部</button>
+  </div>
+</header>
+<main>
+  <div class="notice"><strong>使用流程：</strong> ① 连接模拟器 → ② 打开微信/QQ客户端并切到目标群聊 → ③ 启动消息监控 → ④（可选）启动Excel读取。收到UID后自动触发巡访。</div>
+  <div class="grid">
+    <!-- 左侧：操作区 -->
+    <section class="left">
+      <!-- 连接状态 -->
+      <div class="card">
+        <h2><span class="step">1</span>连接状态</h2>
+        <div class="row" style="margin-bottom:12px">
+          <div class="pill" id="wechat-pill"><span class="dot dot-off"></span>微信未检测</div>
+          <div class="pill" id="qq-pill"><span class="dot dot-off"></span>QQ未检测</div>
+          <div class="pill" id="adb-pill"><span class="dot dot-off"></span>ADB未连接</div>
+        </div>
+        <div class="inst-grid" id="instances"></div>
+        <div id="detect-report" style="margin-top:12px;display:none"></div>
+      </div>
+
+      <!-- 消息监控 -->
+      <div class="card">
+        <h2><span class="step">2</span>消息监控 + Excel读取</h2>
+        <div class="row" style="margin-bottom:10px">
+          <button class="primary" id="btn-monitor" onclick="toggleMonitor()">启动消息监控</button>
+          <button id="btn-excel" onclick="toggleExcel()">启动Excel读取</button>
+          <button class="quiet" onclick="openExcelPanel()">查看名单</button>
+          <select id="speed-sel" style="width:auto" onchange="setSpeed(this.value)">
+            <option value="0.16">快速</option>
+            <option value="0.32" selected>标准速度</option>
+            <option value="0.65">慢速稳定</option>
+          </select>
+        </div>
+        <div class="stats">
+          <div class="stat"><span>总数</span><strong id="stat-total">0</strong></div>
+          <div class="stat pending"><span>等待</span><strong id="stat-pending">0</strong></div>
+          <div class="stat"><span>执行中</span><strong id="stat-running">0</strong></div>
+          <div class="stat success"><span>完成</span><strong id="stat-done">0</strong></div>
+          <div class="stat error"><span>失败</span><strong id="stat-error">0</strong></div>
+        </div>
+        <div class="statusline">
+          <b id="status-msg">等待启动</b>
+          <span id="current-uid"></span>
+        </div>
+        <div class="progress"><div id="progress-fill"></div></div>
+      </div>
+
+      <!-- 消息流 -->
+      <div class="card">
+        <h2>消息流</h2>
+        <div class="msg-list" id="msg-list">
+          <div class="empty">启动监控后，微信群/QQ群的数字消息会显示在这里</div>
+        </div>
+      </div>
+
+      <!-- 巡访任务列表 -->
+      <div class="card">
+        <h2>巡访任务列表</h2>
+        <div class="task-list" id="task-list">
+          <div class="empty">收到UID后自动入队，按主号/小号通道串行执行</div>
+        </div>
+      </div>
+    </section>
+
+    <!-- 右侧：多模拟器预览 + 日志 -->
+    <aside class="right">
+      <!-- 模拟器画面（多实例，带IPC配置） -->
+      <div class="card">
+        <h2>模拟器画面（多实例）</h2>
+        <div id="previews" style="display:flex;flex-direction:column;gap:12px">
+          <div class="preview-empty">连接后各实例画面独立显示</div>
+        </div>
+      </div>
+
+      <!-- 运行日志 -->
+      <div class="card">
+        <h2>运行日志</h2>
+        <div class="log-box" id="log-box">
+          <div class="empty">就绪</div>
+        </div>
+      </div>
+
+      <!-- 巡访引擎状态 -->
+      <div class="card">
+        <h2>巡访引擎</h2>
+        <div id="engine-status" class="hint">未初始化（需要Windows + MuMu IPC配置）</div>
+      </div>
+    </aside>
+  </div>
+</main>
+<footer>本地工具 · 群消息监控UID · MuMu多实例巡访 · 不读取游戏密码 · 关闭网页不会停止任务</footer>
+
+<!-- Excel管理弹出窗口 -->
+<div id="excel-panel" style="display:none;position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,.4);z-index:50">
+  <div style="max-width:700px;margin:40px auto;background:#f5f4fa;border-radius:14px;box-shadow:0 8px 40px #0003;overflow:hidden">
+    <div style="display:flex;justify-content:space-between;align-items:center;padding:18px 24px;background:white;border-bottom:1px solid var(--border)">
+      <h2 style="margin:0;font-size:17px;color:#252338">Excel UID 名单管理</h2>
+      <button class="quiet" onclick="closeExcelPanel()">关闭</button>
+    </div>
+    <div style="padding:20px 24px">
+      <div id="excel-info" style="font-size:13px;color:var(--muted);margin-bottom:14px;line-height:1.8"></div>
+      <!-- 拖拽上传区域 -->
+      <div id="xl-dropzone" style="border:1.5px dashed #c6b6ea;background:#fbf9ff;border-radius:10px;cursor:pointer;padding:16px;text-align:center;margin-bottom:14px;transition:background .15s" onclick="document.getElementById('xl-file').click()">
+        <strong style="display:block;font-size:14px;margin-bottom:4px;color:#6045aa">拖入Excel文件，或点击选择</strong>
+        <span style="font-size:12px;color:var(--muted)">XLSX / CSV / TXT · 自动提取UID列</span>
+      </div>
+      <input type="file" id="xl-file" accept=".xlsx,.xlsm,.csv,.tsv,.txt" style="display:none" onchange="uploadExcel(this.files[0])">
+      <!-- 统计 -->
+      <div class="stats" style="grid-template-columns:repeat(4,1fr);margin-bottom:16px">
+        <div class="stat"><span>总数</span><strong id="xl-total">0</strong></div>
+        <div class="stat success"><span>已查找</span><strong id="xl-done">0</strong></div>
+        <div class="stat pending"><span>待查找</span><strong id="xl-pending">0</strong></div>
+        <div class="stat available"><span>可领取</span><strong id="xl-available">0</strong></div>
+      </div>
+      <!-- UID列表 -->
+      <div style="max-height:400px;overflow:auto;border:1px solid var(--border);border-radius:10px">
+        <table style="width:100%;border-collapse:collapse;font-size:13px">
+          <thead style="position:sticky;top:0;background:#faf9fd">
+            <tr>
+              <th style="text-align:left;padding:9px 12px;border-bottom:1px solid var(--border);font-weight:500;color:#92879e">序号</th>
+              <th style="text-align:left;padding:9px 12px;border-bottom:1px solid var(--border);font-weight:500;color:#92879e">UID</th>
+              <th style="text-align:left;padding:9px 12px;border-bottom:1px solid var(--border);font-weight:500;color:#92879e">状态</th>
+            </tr>
+          </thead>
+          <tbody id="xl-rows"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+let ws=null, monitoring=false, excelRunning=false;
+const messages=[], tasks={};
+const MAX_MSGS=80;
+
+function connectWS(){
+  const proto=location.protocol==='https:'?'wss':'ws';
+  ws=new WebSocket(`${proto}://${location.host}/ws`);
+  ws.onclose=()=>setTimeout(connectWS,3000);
+  ws.onmessage=ev=>{
+    const m=JSON.parse(ev.data);
+    switch(m.type){
+      case 'init':handleInit(m.data);break;
+      case 'connection':handleConn(m);break;
+      case 'message':handleMsg(m);break;
+      case 'task_status':handleTask(m.data);break;
+      case 'log':handleLog(m.data);break;
+    }
+  };
+}
+
+function handleInit(d){
+  updatePill('wechat',d.wechat?.connected);
+  updatePill('qq',d.qq?.connected);
+  updatePill('adb',d.instances&&Object.values(d.instances).some(i=>i.connected));
+  monitoring=d.monitor_running;excelRunning=d.excel_running;
+  updateButtons();
+  if(d.instances)renderInstances(d.instances);
+  if(d.visit_engines?.length)renderEngines(d.visit_engines);
+  updateStats(d.stats);
+}
+
+function handleConn(m){
+  if(m.platform==='微信')updatePill('wechat',m.status==='online');
+  if(m.platform==='QQ')updatePill('qq',m.status==='online');
+}
+
+function updatePill(name,on){
+  const el=document.getElementById(name+'-pill');
+  el.className='pill '+(on?'on':'off');
+  el.innerHTML=`<span class="dot ${on?'dot-on':'dot-off'}"></span>${name}${on?'已连接':'未检测'}`;
+}
+
+function renderInstances(instances){
+  const el=document.getElementById('instances');
+  el.innerHTML=Object.entries(instances).map(([k,v])=>{
+    const dot=v.connected?'dot-on':'dot-off';
+    const rcls=v.role==='main'?'role-main':'role-worker';
+    const rtxt=v.role==='main'?'主号':'小号';
+    const sel=v.role==='main'?'selected':'';
+    const selw=v.role==='worker'?'selected':'';
+    return `<div class="inst-card">
+      <div class="inst-name">${k}</div>
+      <select class="role-select" onchange="changeRole('${k}',this.value)">
+        <option value="main" ${sel}>主号</option>
+        <option value="worker" ${selw}>小号</option>
+      </select>
+      <div class="inst-conn"><span class="dot ${dot}"></span>${v.connected?'已连接':'未连接'} · ${v.port}</div>
+    </div>`;
+  }).join('');
+
+  // 同时渲染每个实例的模拟器画面预览区域（带IPC配置输入）
+  const pv=document.getElementById('previews');
+  const engines=window._visitEngines||[];
+  pv.innerHTML=Object.entries(instances).map(([k,v])=>{
+    const rtxt=v.role==='main'?'主号':'小号';
+    const dot=v.connected?'dot-on':'dot-off';
+    const hasEngine=engines.includes(k);
+    return `<div style="border:1px solid var(--border);border-radius:10px;overflow:hidden">
+      <div style="display:flex;justify-content:space-between;align-items:center;padding:8px 12px;background:#f9f8fc">
+        <span style="font-size:13px;font-weight:bold">${k} <span class="pill ${hasEngine?'on':'off'}" style="font-size:10px">${rtxt}</span></span>
+        <span style="font-size:11px;color:var(--muted)"><span class="dot ${dot}"></span>${v.connected?'已连接':'未连接'}</span>
+      </div>
+      <div class="preview" id="preview-${k}" style="min-height:120px;border-radius:0">
+        ${hasEngine?'<img id="screen-'+k+'" style="width:100%;display:block" alt="截图加载中…">':'<div class="preview-empty">未连接，请填写IPC配置</div>'}
+      </div>
+      <div style="padding:6px 12px;font-size:11px">
+        <div style="display:flex;gap:6px;align-items:center;margin-bottom:4px">
+          <input id="ipc-${k}" placeholder="MuMu IPC配置文件路径（如 C:\\mumu-ipc-0.json）" style="flex:1;font-size:12px;padding:4px 8px" value="${window._ipcConfigs?.[k]||''}">
+          <button class="quiet" style="padding:4px 10px;font-size:12px" onclick="connectIPC('${k}')">连接</button>
+        </div>
+        <div style="display:flex;justify-content:space-between;color:var(--muted)">
+          <span id="state-${k}">${hasEngine?'画面就绪':'${v.host}:${v.port}'}</span>
+          ${hasEngine?`<span style="color:var(--green)">✓ 引擎已连接</span>`:''}
+        </div>
+      </div>
+    </div>`;
+  }).join('');
+}
+
+function renderEngines(engines){
+  const el=document.getElementById('engine-status');
+  if(engines.length){
+    el.innerHTML=`已初始化: ${engines.map(e=>`<span class="pill on" style="margin:2px">${e}</span>`).join('')}`;
+  }
+}
+
+function updateStats(s){
+  if(!s)return;
+  document.getElementById('stat-total').textContent=s.total;
+  document.getElementById('stat-pending').textContent=s.pending;
+  document.getElementById('stat-running').textContent=s.running;
+  document.getElementById('stat-done').textContent=s.done;
+  document.getElementById('stat-error').textContent=s.error;
+  const total=s.total||1;
+  document.getElementById('progress-fill').style.width=(s.done+s.error)/total*100+'%';
+}
+
+function updateButtons(){
+  const bm=document.getElementById('btn-monitor');
+  const be=document.getElementById('btn-excel');
+  const bs=document.getElementById('btn-stop-all');
+  bm.textContent=monitoring?'监控中…':'启动消息监控';
+  bm.className=monitoring?'':'primary';
+  be.textContent=excelRunning?'Excel读取中…':'启动Excel读取';
+  be.className=excelRunning?'primary':'';
+  bs.disabled=!monitoring&&!excelRunning;
+}
+
+function handleMsg(m){
+  const msg=m.data;
+  messages.unshift({...msg,is_hit:m.is_12_digit,time:new Date().toLocaleTimeString()});
+  if(messages.length>MAX_MSGS)messages.pop();
+  renderMsgs();
+}
+
+function renderMsgs(){
+  const el=document.getElementById('msg-list');
+  if(!messages.length){el.innerHTML='<div class="empty">启动监控后，微信群/QQ群的数字消息会显示在这里</div>';return}
+  el.innerHTML=messages.map(m=>{
+    const pcls=m.platform==='微信'?'p-wechat':m.platform==='QQ'?'p-qq':'p-sync';
+    const mcls=m.is_hit?'hit':'';
+    const badge=m.is_hit?'<span class="hit-badge">UID</span>':'';
+    return `<div class="msg-item ${mcls}">
+      <span class="msg-platform ${pcls}">${m.platform||''}</span>
+      <span style="color:#5f5572">${m.sender||''}</span>
+      <span style="color:#393347;flex:1">${m.content}</span>
+      ${badge}
+      <span class="msg-time">${m.time}</span>
+    </div>`;
+  }).join('');
+}
+
+function handleTask(t){
+  tasks[t.task_id]=t;
+  renderTasks();
+  fetchStats();
+}
+
+function renderTasks(){
+  const el=document.getElementById('task-list');
+  const arr=Object.values(tasks).sort((a,b)=>b.task_id.localeCompare(a.task_id));
+  if(!arr.length){el.innerHTML='<div class="empty">收到UID后自动入队，按主号/小号通道串行执行</div>';return}
+  const stMap={pending:'st-pending',running:'st-running',done:'st-done',error:'st-error'};
+  const stTxt={pending:'等待中',running:'执行中',done:'已完成',error:'失败'};
+  const chTxt={main:'主号通道',worker:'小号通道'};
+  const srcMap={'微信':'src-wechat','QQ':'src-qq','Excel':'src-excel'};
+  el.innerHTML=arr.map(t=>{
+    const scls=t.source?.includes('同步')?'src-sync':(srcMap[t.source]||'src-wechat');
+    const stcls=stMap[t.status]||'st-pending';
+    const chTxt2=chTxt[t.channel]||t.channel;
+    const exec=t.executed_on?.length?`执行于: ${t.executed_on.join(', ')}`:'';
+    let visit='';
+    if(t.visit_result){
+      const parts=Object.entries(t.visit_result).map(([k,v])=>`${k}: ${v.status}(${v.detail||''})`);
+      visit=parts.join(' · ');
+    }
+    const err=t.error?` · ${t.error}`:'';
+    return `<div class="task-item">
+      <div class="task-top">
+        <span class="digit-id">${t.digit_id}</span>
+        <span class="task-src ${scls}">${t.source}</span>
+        <span class="task-ch">${chTxt2}</span>
+        <span class="task-st ${stcls}">${stTxt[t.status]||t.status}${err}</span>
+      </div>
+      ${exec?`<div class="task-exec">${exec}</div>`:''}
+      ${visit?`<div class="task-visit">${visit}</div>`:''}
+      <div class="task-time">${t.created_at}${t.finished_at?' → '+t.finished_at:''}</div>
+    </div>`;
+  }).join('');
+}
+
+function handleLog(text){
+  const el=document.getElementById('log-box');
+  if(el.querySelector('.empty'))el.innerHTML='';
+  const div=document.createElement('div');
+  div.textContent=text;
+  el.appendChild(div);
+  el.scrollTop=el.scrollHeight;
+  while(el.children.length>150)el.removeChild(el.firstChild);
+}
+
+async function toggleMonitor(){
+  const url=monitoring?'/api/monitor/stop':'/api/monitor/start';
+  await fetch(url,{method:'POST'});
+  monitoring=!monitoring;updateButtons();
+}
+async function toggleExcel(){
+  const url=excelRunning?'/api/excel/stop':'/api/excel/start';
+  await fetch(url,{method:'POST'});
+  excelRunning=!excelRunning;updateButtons();
+}
+
+// IPC配置连接
+window._ipcConfigs={};
+window._visitEngines=[];
+async function connectIPC(name){
+  const input=document.getElementById('ipc-'+name);
+  const path=input.value.trim();
+  if(!path)return;
+  window._ipcConfigs[name]=path;
+  const btn=input.nextElementSibling;
+  btn.textContent='连接中…';btn.disabled=true;
+  try{
+    const r=await fetch('/api/instance/ipc',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name,ipc_config:path})});
+    const d=await r.json();
+    if(d.ok){
+      btn.textContent='已连接';btn.style.color='var(--green)';
+    }else{
+      btn.textContent='连接';btn.style.color='var(--red)';
+      alert(d.error||'连接失败');
+    }
+  }catch(e){btn.textContent='连接';alert('连接失败')}
+  btn.disabled=false;
+  fetchStatus();
+}
+
+// 定时刷新模拟器截图
+async function refreshScreenshots(){
+  const engines=window._visitEngines||[];
+  for(const name of engines){
+    try{
+      const r=await fetch(`/api/instance/screenshot/${name}`);
+      const d=await r.json();
+      if(d.ok){
+        const img=document.getElementById('screen-'+name);
+        if(img)img.src='data:image/jpeg;base64,'+d.image;
+      }
+    }catch(e){}
+  }
+}
+
+// Excel管理弹出窗口
+let xlPanelOpen=false;
+async function openExcelPanel(){
+  document.getElementById('excel-panel').style.display='block';
+  xlPanelOpen=true;
+  await refreshExcel();
+}
+function closeExcelPanel(){
+  document.getElementById('excel-panel').style.display='none';
+  xlPanelOpen=false;
+}
+async function refreshExcel(){
+  if(!xlPanelOpen)return;
+  try{
+    const r=await fetch('/api/excel/status');
+    const d=await r.json();
+    renderExcelPanel(d);
+  }catch(e){}
+}
+function renderExcelPanel(d){
+  const info=document.getElementById('excel-info');
+  if(d.error){
+    info.innerHTML=`<span style="color:var(--red)">${d.error}</span>`;
+    return;
+  }
+  let html=`文件: ${d.file_path}<br>`;
+  html+=`状态: ${d.running?'查找中…':'已停止'} · 第${d.round||0}轮`;
+  if(d.current_uid)html+=` · 当前查找: <b>${d.current_uid}</b>`;
+  info.innerHTML=html;
+
+  document.getElementById('xl-total').textContent=d.total;
+  document.getElementById('xl-done').textContent=d.processed;
+  document.getElementById('xl-pending').textContent=d.pending;
+  document.getElementById('xl-available').textContent=d.uids.filter(u=>u.status==='available').length;
+
+  const stMap={pending:'待查找',available:'可领取',empty:'已抢完',claimed:'已领过',error:'失败',processed:'已处理'};
+  const stColor={pending:'#a77316',available:'#16815e',empty:'#817b91',claimed:'#817b91',error:'#b64457',processed:'#16815e'};
+  const rows=document.getElementById('xl-rows');
+  rows.innerHTML=d.uids.map(u=>{
+    const cur=u.is_current?'<span style="color:var(--purple);font-weight:bold">▶</span> ':'';
+    return `<tr style="${u.is_current?'background:#f0ecff':''}">
+      <td style="padding:8px 12px;border-bottom:1px solid #f1eff6;font-size:12px;color:#92879e">${u.row-1}</td>
+      <td style="padding:8px 12px;border-bottom:1px solid #f1eff6;font:13px Consolas,monospace;color:#393347">${cur}${u.uid}</td>
+      <td style="padding:8px 12px;border-bottom:1px solid #f1eff6;font-size:12px;color:${stColor[u.status]||'#817b91'}">${stMap[u.status]||u.status}</td>
+    </tr>`;
+  }).join('');
+}
+
+async function uploadExcel(file){
+  if(!file)return;
+  const dz=document.getElementById('xl-dropzone');
+  dz.innerHTML='<strong>上传中…</strong>';
+  const fd=new FormData();
+  fd.append('file',file);
+  try{
+    const r=await fetch('/api/excel/upload',{method:'POST',body:fd});
+    const d=await r.json();
+    if(d.ok){
+      dz.innerHTML=`<strong style="color:var(--green)">上传成功: ${d.count} 个UID</strong><span style="font-size:12px;color:var(--muted);margin-left:8px">${file.name}</span><br><span style="font-size:12px;color:var(--muted)">点击这里可重新上传</span>`;
+      await refreshExcel();
+    }else{
+      dz.innerHTML=`<strong style="color:var(--red)">上传失败: ${d.error}</strong>`;
+    }
+  }catch(e){
+    dz.innerHTML=`<strong style="color:var(--red)">上传失败</strong>`;
+  }
+  dz.onclick=()=>document.getElementById('xl-file').click();
+}
+
+document.addEventListener('DOMContentLoaded',()=>{
+  const dz=document.getElementById('xl-dropzone');
+  if(!dz)return;
+  dz.ondragover=e=>{e.preventDefault();dz.style.background='#f0e8ff'};
+  dz.ondragleave=()=>{dz.style.background='#fbf9ff'};
+  dz.ondrop=e=>{
+    e.preventDefault();dz.style.background='#fbf9ff';
+    if(e.dataTransfer.files.length)uploadExcel(e.dataTransfer.files[0]);
+  };
+});
+
+async function stopAll(){
+  if(monitoring)await fetch('/api/monitor/stop',{method:'POST'});
+  if(excelRunning)await fetch('/api/excel/stop',{method:'POST'});
+  monitoring=false;excelRunning=false;updateButtons();
+}
+async function changeRole(name,role){
+  await fetch('/api/adb/roles',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({roles:{[name]:role}})});
+  fetchStatus();
+}
+async function connectADB(){
+  await fetch('/api/adb/connect',{method:'POST'});
+  fetchStatus();
+}
+
+async function setSpeed(val){
+  await fetch('/api/speed',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({delay:Number(val)})});
+}
+
+async function autoDetect(){
+  const btn=document.getElementById('btn-detect');
+  btn.textContent='检测中…';btn.disabled=true;
+  try{
+    // 先自动发现MuMu实例
+    const dr=await fetch('/api/discover',{method:'POST'});
+    const dd=await dr.json();
+    if(dd.ok){
+      addLog('发现MuMu实例: '+Object.keys(dd.discovered).join(', '));
+    }
+    // 再检测全部环境
+    const r=await fetch('/api/detect',{method:'POST'});
+    const d=await r.json();
+    renderDetectReport(d);
+    updatePill('wechat',d.wechat?.found);
+    updatePill('qq',d.qq?.found);
+    updatePill('adb',d.instances&&Object.values(d.instances).some(i=>i.adb));
+    fetchStatus();
+  }catch(e){console.error(e)}
+  btn.textContent='自动检测环境';btn.disabled=false;
+}
+
+function addLog(msg){handleLog('['+new Date().toLocaleTimeString()+'] '+msg);}
+
+function renderDetectReport(d){
+  const el=document.getElementById('detect-report');
+  if(!d){el.style.display='none';return}
+  el.style.display='block';
+
+  let html='<div style="border:1px solid var(--border);border-radius:10px;padding:14px;font-size:13px;line-height:1.8">';
+
+  // 总体就绪
+  if(d.ready){
+    html+='<div style="background:#e7f7ef;color:#16815e;padding:8px 12px;border-radius:8px;margin-bottom:10px;font-weight:600">✓ 全部就绪！可以开始巡访</div>';
+  }else{
+    html+='<div style="background:#f5e8ea;color:#b64457;padding:8px 12px;border-radius:8px;margin-bottom:10px;font-weight:600">✗ 尚未就绪，请按提示检查</div>';
+  }
+
+  // 微信
+  const wok=d.wechat?.found;
+  html+=`<div style="margin-bottom:6px"><span class="dot ${wok?'dot-on':'dot-off'}"></span><b>微信：</b>${d.wechat?.detail||'未检测'}</div>`;
+
+  // QQ
+  const qok=d.qq?.found;
+  html+=`<div style="margin-bottom:10px"><span class="dot ${qok?'dot-on':'dot-off'}"></span><b>QQ：</b>${d.qq?.detail||'未检测'}</div>`;
+
+  // 每个实例
+  if(d.instances){
+    html+='<div style="margin-top:8px;font-weight:600;margin-bottom:6px">模拟器实例：</div>';
+    for(const [name,info] of Object.entries(d.instances)){
+      const adbOk=info.adb?'✓':'✗';
+      const ipcOk=info.ipc?'✓':'✗';
+      const adbColor=info.adb?'color:var(--green)':'color:var(--red)';
+      const ipcColor=info.ipc?'color:var(--green)':'color:var(--red)';
+      html+=`<div style="padding:6px 10px;border:1px solid var(--border);border-radius:8px;margin-bottom:6px">
+        <div style="font-weight:bold;font-size:13px">${name}</div>
+        <div style="font-size:12px;color:var(--muted)">
+          <span style="${adbColor}">${adbOk} ADB：</span>${info.adb_detail}
+        </div>
+        <div style="font-size:12px;color:var(--muted)">
+          <span style="${ipcColor}">${ipcOk} 巡访引擎：</span>${info.ipc_detail}
+        </div>
+      </div>`;
+    }
+  }
+
+  html+='</div>';
+  el.innerHTML=html;
+}
+
+async function fetchStatus(){
+  try{
+    const r=await fetch('/api/status');
+    const d=await r.json();
+    updatePill('wechat',d.wechat?.connected);
+    updatePill('qq',d.qq?.connected);
+    updatePill('adb',d.instances&&Object.values(d.instances).some(i=>i.connected));
+    window._visitEngines=d.visit_engines||[];
+    if(d.instances)renderInstances(d.instances);
+    if(d.visit_engines?.length)renderEngines(d.visit_engines);
+    updateStats(d.stats);
+    monitoring=d.monitor_running;excelRunning=d.excel_running;updateButtons();
+  }catch(e){}
+}
+
+connectWS();
+setInterval(fetchStatus,3000);
+setInterval(refreshExcel,2000);
+setInterval(refreshScreenshots,1500);
+</script>
+</body>
+</html>
