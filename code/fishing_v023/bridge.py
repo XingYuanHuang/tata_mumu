@@ -22,7 +22,7 @@ def validate(q,windows):
     hwnd=int(q['handle'])
     if hwnd not in {int(h) for h,_ in windows}:raise ValueError('所选窗口已关闭或不是 MuMu')
     mode=q.get('mode','single');limit=int(q.get('limit',3));latency=float(q.get('latency',35))
-    if mode not in ('single','auto','observe') or not 1<=limit<=999 or not math.isfinite(latency) or not 0<=latency<=180:raise ValueError('钓鱼参数无效')
+    if mode not in ('single','auto','observe') or not 1<=limit<=99999 or not math.isfinite(latency) or not 0<=latency<=180:raise ValueError('钓鱼参数无效')
     return hwnd,mode,limit,latency
 
 def run(q,native,data):
@@ -30,11 +30,20 @@ def run(q,native,data):
     hwnd,mode,limit,latency=validate(q,native.candidates())
     if native.old_helpers():raise RuntimeError('请先停止旧版钓鱼助手')
     if not native.single_instance():raise RuntimeError('已有钓鱼助手运行，请先关闭它')
-    cancel=threading.Event()
+    cancel=threading.Event();pause=threading.Event()
+    bait_on=threading.Event()
+    if q.get('bait'):bait_on.set()   # 启动时即开启撒鱼饵模式
     def control():
         try:
             for line in sys.stdin:
-                if json.loads(line).get('command')=='stop':cancel.set();return
+                try:cmd=json.loads(line)
+                except Exception:continue
+                c=cmd.get('command')
+                if c=='stop':cancel.set();return
+                if c=='pause':pause.set()
+                elif c=='resume':pause.clear()
+                elif c=='bait':
+                    (bait_on.set if cmd.get('on') else bait_on.clear)()
         finally:cancel.set()
     def hotkeys():
         while not cancel.wait(.02):
@@ -44,7 +53,7 @@ def run(q,native,data):
     backend='mumu-ipc' if getattr(native,'background',False) else q.get('backend','sendinput')
     settings=Settings(mode,limit,latency,False,backend,q.get('edge','both'))
     session=Session(data,emit)
-    try:Runner(native,ROOT/'assets',session,settings,hwnd,cancel,emit).run()
+    try:Runner(native,ROOT/'assets',session,settings,hwnd,cancel,emit,pause=pause,bait_on=bait_on).run()
     finally:cancel.set();native.release()
 
 def main():

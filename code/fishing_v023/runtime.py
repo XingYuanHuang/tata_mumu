@@ -3,8 +3,10 @@ from __future__ import annotations
 from collections import deque
 from dataclasses import asdict, dataclass
 from datetime import datetime
+import base64
 import json
 import csv
+import os
 from pathlib import Path
 import platform
 import threading
@@ -122,10 +124,19 @@ class Session:
         return dest
 
 class Runner:
-    def __init__(self,native,assets,session,settings,hwnd,cancel,post):
+    def __init__(self,native,assets,session,settings,hwnd,cancel,post,pause=None,bait_on=None):
         self.native=native;self.assets=Path(assets);self.session=session;self.settings=settings
-        self.hwnd=hwnd;self.cancel=cancel;self.post=post
-        self.region=None;self.wrect=None;self.ctl=None
+        self.hwnd=hwnd;self.cancel=cancel;self.post=post;self.pause=pause;self.bait_on=bait_on
+        self.region=None;self.wrect=None;self.ctl=None;self._paused=False;self.gate=None
+
+    def record_payload(self,frame,obs):
+        """纪录卡出现：裁卡片区域压成 JPEG base64，供上层记录/展示。"""
+        s=obs.scores
+        top=int(s.get('card_top',120));bottom=int(s.get('card_bottom',830))
+        crop=frame[max(0,top-60):min(HEIGHT,bottom+90),10:578]
+        ok,buf=cv2.imencode('.jpg',crop,[cv2.IMWRITE_JPEG_QUALITY,70])
+        return dict(time=datetime.now().strftime('%Y-%m-%d %H:%M:%S'),kind=obs.state,
+                    image=base64.b64encode(buf).decode('ascii') if ok else None)
     def status(self,key):self.post('status',tr(key))
     def locate(self,screen,locator):
         before=self.native.window_rect(self.hwnd)
@@ -179,7 +190,11 @@ class Runner:
                 limit=1 if self.settings.mode=='single' else self.settings.limit
                 if found.state!='READY' and self.settings.mode=='single':limit=0
                 self.ctl=Controller(limit,self.settings.jitter,self.settings.latency,
-                                    backend=self.settings.backend,edge=self.settings.edge)
+                                    backend=self.settings.backend,edge=self.settings.edge,
+                                    bait_on=self.bait_on)
+                from bait_gate import BaitGate
+                # data 目录被三个实例的子进程共享，门闩据此错峰撒饵
+                self.gate=BaitGate(self.session.path.parent.parent)
                 vision=Vision(self.assets);watch=Motion()
                 n=0;fps=0.;rate_started=time.perf_counter();last_preview=0.;last_memory=0.
                 speed_started=rate_started;last_speed=rate_started
@@ -202,9 +217,25 @@ class Runner:
                         old_state='';continue
                     if loop-last_visibility>.35:
                         self.check_visibility();last_visibility=loop
+                    paused=self.pause is not None and self.pause.is_set()
+                    if paused!=self._paused:
+                        self._paused=paused
+                        if paused:self.status('paused')
+                        else:
+                            self.status('resumed')
+                            # 暂停期间在途输入已过时，作废以免恢复后立即超时停止
+                            if self.ctl:self.ctl.abort_pending()
                     t0=time.perf_counter();raw=np.asarray(screen.grab(self.region.grab()))[:,:,:3]
                     t1=time.perf_counter();captured=(t0+t1)/2
-                    frame=cv2.resize(raw,(WIDTH,HEIGHT));obs=vision.analyze(frame,captured)
+                    frame=cv2.resize(raw,(WIDTH,HEIGHT))
+                    # QTE 快速通道：上一帧确认是 QTE 时，跳过全图模板匹配与结算卡
+                    # 检测，只做识别条+游标/黄区跟踪；探测不到 QTE 再回退完整识别。
+                    if old_state=='QTE':
+                        obs=vision.qte_probe(frame,captured)
+                        if obs is None:
+                            obs=vision.analyze(frame,captured,raw)
+                    else:
+                        obs=vision.analyze(frame,captured,raw)
                     age=time.perf_counter()-captured
                     self.session.latest=frame;self.session.obs=obs
                     if after_input:
@@ -214,7 +245,10 @@ class Runner:
                     if obs.state!=old_state:
                         self.session.log('STATE '+tr(obs.state)+' '+str(obs.scores))
                         self.status(obs.state);old_state=obs.state
-                    if self.settings.mode!='observe':
+                        if obs.state=='RECORD':
+                            self.session.keyframe('record_card',frame,obs)
+                            self.post('record',self.record_payload(frame,obs))
+                    if self.settings.mode!='observe' and not self._paused:
                         if obs.state=='QTE' and age>.14:
                             if slow_since is None:slow_since=captured
                             if captured-slow_since>1.2:raise StopRun('slow_capture')
@@ -261,6 +295,22 @@ class Runner:
                                 fresh=np.asarray(screen.grab(self.region.grab()))[:,:,:3]
                                 fresh_obs=vision.analyze(cv2.resize(fresh,(WIDTH,HEIGHT)),time.perf_counter())
                                 if fresh_obs.state!='UNKNOWN':continue
+                            if act.kind in ('BAIT','BAIT2'):
+                                # 演练模式：只验证识别与决策，绝不发送真实撒饵点击
+                                if os.environ.get('FISH_BAIT_DRYRUN'):
+                                    self.ctl.withdraw_bait(dryrun=True)
+                                    self.session.log('撒鱼饵 [演练] level=%s bait=%s %s → 识别正确，未发送点击'
+                                                     %(obs.level,obs.bait_count,
+                                                       '弹窗已开' if obs.bait_popup else ''))
+                                    continue
+                                # 跨实例排队：门闩挂在"打窝"点击（真正撒饵动作）上，
+                                # 保证任意两次撒饵间隔 > 3 秒；点鱼饵包开弹窗不占排队。
+                                if act.kind=='BAIT2':
+                                    if not self.gate.wait_turn(self.cancel):
+                                        self.ctl.withdraw_bait()
+                                        self.session.log('撒鱼饵排队等待被打断，本次跳过')
+                                        continue
+                                    self.session.log('撒鱼饵轮到本实例（跨实例间隔已保证>3秒）')
                             if self.native.key(1) and not self.native.pressed:raise StopRun('manual_mouse')
                             x,y=input_point(self.native,self.region,act,obs)
                             guard=lambda p:self.native.safe(self.hwnd,self.wrect,p)
@@ -292,9 +342,14 @@ class Runner:
                         self.session.record_speed(dict(**counts,**speed));last_speed=now
                     if now-rate_started>=.8:
                         fps=n/(now-rate_started);n=0;rate_started=now
-                        self.post('stats',dict(fps=fps,**counts,**speed))
+                        payload=dict(fps=fps,**counts,**speed)
+                        if obs.level is not None:payload['level']=obs.level
+                        if obs.bait_count is not None:payload['bait']=obs.bait_count
+                        self.post('stats',payload)
                         self.post('hook_stats',dict(hooks=self.ctl.hook_input_count,unverified=self.ctl.hook_unverified))
-                    if now-last_preview>.4:
+                    # 预览画面在 bridge 模式下不会外发（emit 已过滤），默认跳过
+                    # 生成以省 CPU；独立 GUI 调试时可设 FISH_PREVIEW=1 打开。
+                    if os.environ.get('FISH_PREVIEW', '0') == '1' and now-last_preview>.4:
                         preview=annotate(frame,obs,self.ctl.predicted)
                         cv2.drawMarker(preview,(295,858),(30,220,30),cv2.MARKER_CROSS,20,2)
                         preview=cv2.resize(preview,(218,359))

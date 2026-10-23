@@ -72,7 +72,7 @@ class MuMuIO:
     def capture_session(self):return Capture(self)
     def candidates(self):return [(self.handle,f'MuMu 后台实例 {self.index} · {self.serial}')]
     def old_helpers(self):return self.desktop_keys.old_helpers()
-    def single_instance(self):return self.desktop_keys.single_instance()
+    def single_instance(self):return self.desktop_keys.single_instance(f'_MuMu{self.index}')
     def key(self,vk):return False if vk==1 else self.desktop_keys.key(vk)
     def elevation(self,hwnd=None):return False
     def activate(self,hwnd):return hwnd==self.handle

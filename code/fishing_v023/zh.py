@@ -86,6 +86,6 @@ TEXT.update({'RESULT': '\u6536\u9c7c\u5c55\u793a\u5361\uff1a\u7b49\u5f85\u70b9\u
 
 TEXT.update({'CONTINUE': '疑似收鱼页：尝试点击空白处继续', 'RESULT': '收鱼结算：自动点击继续', 'RECORD': '纪录结算：自动点击继续', 'collect_skipped': '结算页已消失，取消过期点击并重新识别', 'result_stuck': '结算页已有限重试，但界面仍无响应。已停止避免无限连点，可导出诊断。', 'retry': '界面仍在，再次点击（有次数上限）', 'intro': '打开钓鱼界面或收鱼卡，点开始。各种纪录卡统一点击继续。'})
 
-TEXT.update({'RECOVER':'未知画面：点击空白继续','unknown_screen_stuck':'空白处已尝试三次仍无响应，任务已停止，请检查游戏画面。','UNKNOWN':'未知画面：短暂等待后尝试点击空白'})
+TEXT.update({'RECOVER':'未知画面：点击空白继续','unknown_screen_stuck':'空白处已尝试三次仍无响应，任务已停止，请检查游戏画面。','UNKNOWN':'未知画面：短暂等待后尝试点击空白','qte_deliberate_miss':'QTE 人为失误（节奏拟真）','qte_miss_grace_unlock':'失误后本轮未结束，宽限解锁继续瞄准','paused':'已暂停：不发送任何输入，点继续恢复','resumed':'已继续运行','paused_drop':'暂停作废在途输入','BAIT':'点击鱼饵包','BAIT2':'点击打窝确认撒饵','bait_popup_seen':'撒饵弹窗已弹出：点击打窝','bait_stop_pending':'等级满/鱼饵耗尽待二次确认','bait_failed':'撒饵未生效：跳过本次，30秒后重试（钓鱼不中断）','bait_spread':'撒饵已生效','bait_reactivate':'打窝等级已衰减，重新激活撒饵','qte_zone_repeat_unlock':'同一黄区重复轮：识别健康，继续瞄准不误停'})
 
 def tr(key):return TEXT.get(key,key)

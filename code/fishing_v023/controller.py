@@ -6,9 +6,28 @@ Synthetic/offline tests can inspect every transition without sending input.
 from __future__ import annotations
 from collections import deque
 from dataclasses import dataclass
+import os
 import random
 import numpy as np
 from vision import Observation
+
+# 每 N 次 QTE 点击安排一次"人为失误"（N 在区间内随机）。
+# 可用环境变量 FISH_MISS_MIN / FISH_MISS_MAX 覆盖，便于调试。
+MISS_RANGE=(max(2,int(os.environ.get('FISH_MISS_MIN','20'))),
+            max(2,int(os.environ.get('FISH_MISS_MAX','30'))))
+
+# 撒鱼饵：右侧奖励上方的鱼饵包按钮（画布坐标 588x968）。
+BAIT_POINT=(527,788)
+# 等级徽章上限（图鉴上方的数字），达到后停止撒饵。
+BAIT_LEVEL_MAX=8
+
+# QTE 僵死看门狗（与快/慢轮型无关的通用兜底）：
+#   一级 FISH_QTE_FALLBACK_IN（默认 5s）：QTE 持续无任何点击达此时长，
+#     且游标在黄区内 → 立即点击；
+#   二级（一级 +2.5s）：无视游标/黄区识别结果，盲点一次强行推进。
+#   盲点失败时按"失误宽限"处理（0.9s 后解锁继续），不会终止会话。
+QTE_FALLBACK_IN=max(2.,float(os.environ.get('FISH_QTE_FALLBACK_IN','5.0')))
+QTE_FALLBACK_BLIND=QTE_FALLBACK_IN+2.5
 
 @dataclass
 class Action:
@@ -31,18 +50,28 @@ class Motion:
         while self.samples and t-self.samples[0][0]>.105:self.samples.popleft()
     def velocity(self):
         if len(self.samples)<3 or self.samples[-1][0]-self.samples[0][0]<.030:return None
-        a=np.asarray(self.samples,dtype=float);d=np.diff(a[:,1]);nz=d[np.abs(d)>.6]
-        if len(nz)<2 or (np.any(nz>0) and np.any(nz<0)):return None
-        ts=a[:,0]-a[-1,0];centered=ts-ts.mean();den=float(centered@centered)
-        if den<1e-8:return None
-        v=float(centered@(a[:,1]-a[:,1].mean())/den)
-        residual=float(np.sqrt(np.mean((a[:,1]-(a[:,1].mean()+v*centered))**2)))
-        return v if 15<abs(v)<1200 and residual<=3.5 else None
+        a=np.asarray(self.samples,dtype=float);d=np.diff(a[:,1])
+        # 两遍估计：严格门限覆盖快速轮；宽松门限覆盖慢速漂移轮（帧位移<0.6px）。
+        for gate,need,min_v in ((0.6,2,15.0),(0.15,3,4.0)):
+            nz=d[np.abs(d)>gate]
+            if len(nz)<need or (np.any(nz>0) and np.any(nz<0)):continue
+            ts=a[:,0]-a[-1,0];centered=ts-ts.mean();den=float(centered@centered)
+            if den<1e-8:continue
+            v=float(centered@(a[:,1]-a[:,1].mean())/den)
+            residual=float(np.sqrt(np.mean((a[:,1]-(a[:,1].mean()+v*centered))**2)))
+            if min_v<=abs(v)<1200 and residual<=max(3.5,abs(v)*.08):return v
+        return None
 
 class Controller:
-    def __init__(self,max_casts=3,jitter=False,latency_ms=35,seed=None,backend='sendinput',edge='both'):
+    def __init__(self,max_casts=3,jitter=False,latency_ms=35,seed=None,backend='sendinput',edge='both',bait_on=None):
         self.max_casts=int(max_casts);self.jitter=jitter;self.latency=float(latency_ms)/1000
         self.rng=random.Random(seed);self.backend=backend;self.edge=edge
+        self.bait_on=bait_on          # threading.Event：撒鱼饵模式开关（可随时切换）
+        self.bait_done=False          # 等级满/鱼饵耗尽后置位，本轮会话不再撒饵
+        self.bait_prev_level=None;self.bait_prev_count=None
+        self.bait_wait_since=None;self.bait_stop_seen=0
+        self.bait_fails=0;self.bait_last_fail=0.  # 数字识别失败重试计数
+        self.bait_flow_fails=0;self.bait_flow_cooldown=0.  # 撒饵流程失败冷却
         self.cast_count=0;self.cast_attempts=0;self.qte_count=0;self.collect_count=0
         self.state='';self.state_since=0.;self.started=None;self.last_progress=0.
         self.pending=None;self.pending_time=0.;self.pending_retries=0
@@ -58,6 +87,13 @@ class Controller:
         self.hook_live_since=None
         self.unknown_since=None;self.recovery_count=0;self.recovery_time=-999.
         self.recovery_sent=False
+        self.qte_total=0
+        self.qte_slow_since=None
+        self.qte_last_fire=None   # 最近一次 QTE 点击（含兜底）发出时刻，看门狗基准
+        self.qte_no_feedback_count=0  # 连续"点击后无反馈"宽限解锁次数（有界防死循环）
+        lo,hi=min(MISS_RANGE),max(MISS_RANGE)
+        self.qte_next_miss=self.rng.randint(lo,hi)
+        self.qte_miss_pending=False
 
     def event(self,code,**data):self.events.append((code,data))
     def drain_events(self):out=self.events;self.events=[];return out
@@ -84,6 +120,11 @@ class Controller:
     def input_sent(self, action, receipt):
         """Only an actual OS receipt counts as an input, never a proposal/timeout."""
         if action.kind=='RECOVER':self.recovery_sent=True
+        if action.kind=='QTE':
+            self.qte_total+=1
+            if self.qte_total>=self.qte_next_miss:
+                lo,hi=min(MISS_RANGE),max(MISS_RANGE)
+                self.qte_next_miss=self.qte_total+self.rng.randint(lo,hi)
         if self.pending==action.kind:self.pending_time=receipt.up_at
         if action.kind=='HOOK':
             self.hook_input_count+=1;self.hook_cycle_inputs+=1
@@ -125,11 +166,70 @@ class Controller:
             self.pending=None;self.confirm_since=None
         self.event('collect_skipped')
 
+    def withdraw_bait(self,dryrun=False):
+        """撤销未发出的撒饵点击。dryrun=True 时视为功能验证完成，不再重试。"""
+        if self.pending in ('BAIT','BAIT2'):self.pending=None;self.confirm_since=None
+        if dryrun:self.bait_done=True
+        self.event('bait_dryrun' if dryrun else 'bait_skipped')
+
+    def _bait_failed(self,t):
+        """撒饵流程失败（弹窗未出现/打窝未生效）：绝不停止钓鱼会话。
+        跳过本次，冷却 30 秒后自动重试；连续失败 3 次才放弃本会话撒饵。"""
+        self.pending=None;self.confirm_since=None
+        self.bait_flow_fails+=1
+        self.last_progress=t
+        if self.bait_flow_fails>=3:
+            self.bait_done=True
+            self.event('bait_done',reason='flow_failed')
+        else:
+            self.bait_flow_cooldown=t+30.
+        self.event('bait_failed',fails=self.bait_flow_fails)
+        return None
+
     def reset_qte(self):
         self.qte_active=False;self.qte_since=None;self.qte_locked=False;self.qte_ack=False
         self.motion.reset();self.changed_since=None;self.flash_last=False
+        self.qte_miss_pending=False;self.qte_slow_since=None;self.qte_last_fire=None
+        self.qte_no_feedback_count=0
+    def abort_pending(self):
+        """暂停结束/恢复时调用：在途输入已过时，作废并复位计时，避免立即超时停止。"""
+        if self.pending:
+            self.event('paused_drop',kind=self.pending)
+            self.pending=None;self.confirm_since=None
+        self.reset_qte();self.unknown_since=None
     def _pending_step(self,o,t,same_counter):
         kind=self.pending
+        if kind in ('BAIT','BAIT2'):
+            # 撒饵两段式：BAIT=点鱼饵包（弹出确认框）→ BAIT2=点绿色"打窝"按钮。
+            # 真正撒饵发生在打窝点击后：以鱼饵计数减少或等级增长确认。
+            changed=(o.bait_count is not None and self.bait_prev_count is not None
+                     and o.bait_count<self.bait_prev_count) or \
+                    (o.level is not None and self.bait_prev_level is not None
+                     and o.level>self.bait_prev_level)
+            if kind=='BAIT':
+                if o.bait_popup and o.control:
+                    self.event('bait_popup_seen',level=o.level,bait=o.bait_count)
+                    return self.act('BAIT2',t,point=o.control)
+                elapsed=t-self.pending_time
+                if elapsed>4.5:
+                    if self.pending_retries<1:
+                        self.event('retry',kind='BAIT')
+                        return self.act('BAIT',t,retry=True,reason='no_popup_retry',point=BAIT_POINT)
+                    return self._bait_failed(t)
+                return None
+            # BAIT2：等待撒饵生效
+            if changed:
+                self.event('bait_spread',level=o.level,bait=o.bait_count)
+                self.pending=None;self.confirm_since=None;self.last_progress=t
+                self.bait_flow_fails=0
+                return None
+            elapsed=t-self.pending_time
+            if elapsed>4.5:
+                if self.pending_retries<1 and o.bait_popup and o.control:
+                    self.event('retry',kind='BAIT2')
+                    return self.act('BAIT2',t,retry=True,reason='bounded_retry',point=o.control)
+                return self._bait_failed(t)
+            return None
         good={
             'CAST':('WAIT','BITE','QTE','REWARD','RECORD','RESULT','CONTINUE'),
             'HOOK':('QTE','REWARD','RECORD','RESULT','CONTINUE'),
@@ -176,7 +276,7 @@ class Controller:
         if self.started is None:self.started=t;self.last_progress=t
         self.observe_hook_progress(o,t)
         if o.state!=self.state:
-            self.state=o.state;self.state_since=t
+            self.state=o.state;self.state_since=t;self.bait_wait_since=None
             if o.state=='READY':self.delay=self.rng.uniform(.35,.6) if self.jitter else .40
             elif o.state=='BITE':
                 self.delay=0. if o.scores.get('bite_source') else .025
@@ -201,6 +301,9 @@ class Controller:
             self.recovery_sent=False
         elif o.state in ('WAIT','BITE','QTE','REWARD','RESULT','RECORD','CONTINUE'):
             self.recovery_sent=False
+        # 撒鱼饵开关关闭时，撤销在途未确认的撒饵点击，避免卡在等待确认。
+        if self.pending in ('BAIT','BAIT2') and not (self.bait_on is not None and self.bait_on.is_set()):
+            self.withdraw_bait()
         if self.pending:
             result=self._pending_step(o,t,same_counter)
             if result or self.pending:return result
@@ -212,6 +315,65 @@ class Controller:
             return None
         if o.state=='READY':
             if self.cast_count>=self.max_casts:return self.stop('cast_limit')
+            # 打窝等级会随时间衰减（实测 8 级约 10 分钟后掉回 4 级），bait_done
+            # 不是永久状态：每竿回待机时若读到干净数字显示等级<8 且鱼饵>0，
+            # 重新激活撒饵循环（同时也纠正单帧数字误读导致的错误关闭）。
+            if (self.bait_done and self.bait_on is not None and self.bait_on.is_set()
+                    and o.level is not None and o.bait_count is not None
+                    and o.level<BAIT_LEVEL_MAX and o.bait_count>0
+                    and t>=self.bait_flow_cooldown):
+                self.bait_done=False;self.bait_stop_seen=0;self.bait_fails=0
+                self.event('bait_reactivate',level=o.level,bait=o.bait_count)
+            # 撒鱼饵模式：等级未满 8 且鱼饵包数量 > 0 时先撒饵；鱼饵为 0 直接钓鱼。
+            if (self.bait_on is not None and self.bait_on.is_set()
+                    and not self.bait_done and t>=self.bait_flow_cooldown):
+                if o.level is None or o.bait_count is None:
+                    # 待机动画/过渡帧常导致数字识别失败：短暂等待识别稳定。
+                    # 失败后不永久放弃（星星闪光可能长期干扰），改为每 20 秒
+                    # 重试一次；累计 5 次全部失败才放弃（识别大概率真坏了）。
+                    if self.bait_wait_since is not None:
+                        if t-self.bait_wait_since < 2.5:
+                            return None
+                        self.bait_wait_since=None
+                        self.bait_fails += 1
+                        self.bait_last_fail=t
+                        if self.bait_fails >= 5:
+                            self.bait_done=True
+                            self.event('bait_done',reason='recognition_timeout')
+                    elif (self.bait_fails == 0
+                          or (t-self.bait_last_fail > 20 and self.bait_fails < 5)):
+                        self.bait_wait_since=t
+                        return None
+                else:
+                    self.bait_wait_since=None
+                    self.bait_fails=0
+                    full=o.level>=BAIT_LEVEL_MAX
+                    empty=o.bait_count<=0
+                    if full or empty:
+                        # 二次确认：连续两个待机帧都满足才暂时禁用撒饵（等级衰减
+                        # 或补充鱼饵后由上方 bait_reactivate 重新激活），
+                        # 防止单帧数字误读（如 3 误读成 8）错误关闭功能。
+                        self.bait_stop_seen+=1
+                        reason='level_max' if full else 'no_bait'
+                        if self.bait_stop_seen>=2:
+                            self.bait_done=True
+                            self.event('bait_done',reason=reason,
+                                       level=o.level,bait=o.bait_count)
+                        else:
+                            self.event('bait_stop_pending',reason=reason,
+                                       level=o.level,bait=o.bait_count)
+                        # 未确认前先正常钓鱼，下个待机帧继续复核。
+                    else:
+                        self.bait_stop_seen=0
+                        if o.bait_popup and o.control:
+                            # 上次点鱼饵包的弹窗还开着：直接点"打窝"补完撒饵。
+                            self.bait_prev_level=o.level;self.bait_prev_count=o.bait_count
+                            self.last_progress=t
+                            return self.act('BAIT2',t,point=o.control)
+                        if t-self.state_since<self.delay:return None
+                        self.last_progress=t
+                        self.bait_prev_level=o.level;self.bait_prev_count=o.bait_count
+                        return self.act('BAIT',t,point=BAIT_POINT)
             if t-self.state_since<self.delay:return None
             self.last_progress=t
             return self.act('CAST',t)
@@ -230,6 +392,7 @@ class Controller:
         if o.flash:
             if self.qte_locked and t-self.qte_time>.025:self.qte_ack=True
             self.flash_last=True;self.motion.reset();self.predicted=None
+            self.qte_slow_since=None
             return None
         if self.flash_last:self.flash_last=False;self.flash_end=t
         if o.x is not None:self.motion.add(t,o.x)
@@ -253,12 +416,76 @@ class Controller:
             if self.qte_ack and (stable_new or self.left_target) and t-self.qte_time>.30 and t-self.flash_end>.08:
                 self.qte_locked=False;self.qte_ack=False;self.left_target=False
                 self.changed_since=None;self.motion.reset();self.last_progress=t
+                self.qte_miss_pending=False;self.qte_last_fire=t
+                self.qte_no_feedback_count=0
             else:
-                if not self.qte_ack and t-self.qte_time>3.2:return self.stop('qte_no_feedback')
+                if (not self.qte_ack and self.qte_miss_pending and t-self.qte_time>=.9
+                        and not o.flash):
+                    # 失误点击后游戏可能不结束本轮（同一黄区继续）。
+                    # 宽限结束后直接解锁，继续正常瞄准；失误本身已计入。
+                    self.qte_locked=False;self.qte_ack=False;self.left_target=False
+                    self.changed_since=None;self.motion.reset();self.last_progress=t
+                    self.qte_miss_pending=False;self.qte_last_fire=t
+                    self.event('qte_miss_grace_unlock')
+                elif not self.qte_ack and t-self.qte_time>3.2:
+                    # 点击后长时间无反馈不一定是识别坏了：普通点击落空（游标
+                    # 没进黄区）时游戏同样不结束本轮；大鱼还可能是同一黄区
+                    # 需要多次命中的重复轮。游戏 QTE 有倒计时，本轮必然结束。
+                    # 识别健康（黄区+游标都在）时只解锁继续瞄准、不计入停止
+                    # 计数；识别退化（看不到黄区或游标）才累计，连续 2 次仍
+                    # 无反馈才判定画面异常并停止会话。
+                    healthy=o.target is not None and o.x is not None
+                    if healthy:
+                        self.qte_locked=False;self.qte_ack=False;self.left_target=False
+                        self.changed_since=None;self.motion.reset();self.last_progress=t
+                        self.qte_miss_pending=False;self.qte_last_fire=t
+                        self.qte_no_feedback_count=0
+                        self.event('qte_zone_repeat_unlock')
+                    elif self.qte_no_feedback_count<2:
+                        self.qte_no_feedback_count+=1
+                        self.qte_locked=False;self.qte_ack=False;self.left_target=False
+                        self.changed_since=None;self.motion.reset();self.last_progress=t
+                        self.qte_miss_pending=False;self.qte_last_fire=t
+                        self.event('qte_no_feedback_unlock',
+                                   count=self.qte_no_feedback_count)
+                    else:
+                        return self.stop('qte_no_feedback')
                 return None
+        # QTE 僵死看门狗：无论何种原因（识别全失败/速度异常/失误窗口空转），
+        # 只要本轮 QTE 太久没有任何点击就强制出手，避免干等到 qte_timeout 丢鱼。
+        since=self.qte_last_fire if self.qte_last_fire is not None else self.qte_since
+        if (since is not None and not self.qte_locked
+                and t-since>QTE_FALLBACK_IN and t-self.flash_end>.08):
+            inside_now=(o.x is not None and o.target is not None
+                        and o.target[0]<=o.x<=o.target[1])
+            if inside_now or t-since>QTE_FALLBACK_BLIND:
+                tier='inside' if inside_now else 'blind'
+                self.qte_locked=True;self.qte_ack=False;self.left_target=False
+                self.qte_time=t;self.clicked_bounds=o.target;self.changed_since=None
+                self.last_progress=t;self.qte_miss_pending=True
+                self.qte_last_fire=t
+                self.event('qte_watchdog',tier=tier,elapsed=round(t-since,1))
+                return Action('QTE',(295,858),
+                              'watchdog(%s) elapsed=%.1fs'%(tier,t-since),
+                              False,self.qte_hold_ms,self.backend)
         if o.x is None or o.target is None:return None
         v=self.motion.velocity()
-        if v is None:return None
+        if v is None:
+            # 慢速漂移轮兜底：速度估计持续不可用（游戏慢速轮浮标近乎静止，
+            # 帧位移低于噪声门限），但浮标已稳定停在黄区内 → 直接点击，无需预测。
+            if self.qte_slow_since is None:self.qte_slow_since=t
+            if (not self.qte_locked and t-self.qte_slow_since>=1.2
+                    and t-self.flash_end>.08 and not self.qte_miss_pending):
+                l,r=o.target;margin=max(5.0,(r-l)*.12)
+                if l+margin<=o.x<=r-margin:
+                    self.qte_locked=True;self.qte_ack=False;self.left_target=False
+                    self.qte_time=t;self.clicked_bounds=o.target;self.changed_since=None
+                    self.last_progress=t;self.predicted=o.x;self.qte_last_fire=t
+                    return Action('QTE',(295,858),
+                                  'slow_drift x=%.1f target=%.1f..%.1f hold=%dms'%(o.x,l,r,self.qte_hold_ms),
+                                  False,self.qte_hold_ms,self.backend)
+            return None
+        self.qte_slow_since=None
         l,r=o.target;width=r-l
         if width<9:return None
         delay=self.latency+max(0,min(.12,processing_delay))
@@ -266,17 +493,55 @@ class Controller:
         margin=max(2.5,min(10,width*.14))
         self.predicted=up
         inside=lambda x:l+margin<=x<=r-margin
-        if self.edge=='down':eligible=inside(down)
+        if width<65:
+            # 小黄区：贴边点击容错极差（速度估计差 5~10px 即出界，日志实测
+            # 30px 区连点 3 次被游戏拒绝）。不等“刚进区”就抢点，而是等按压
+            # 中点越过区中心再发射，让按下/松开对称骑在中心两侧；若一帧内
+            # 已滑过中心太深（inside 检查不通过）则放弃本次，等下一趟折返。
+            mid=down+v*self.qte_hold_ms/2000
+            c=(l+r)/2
+            eligible=((v>0 and mid>=c)or(v<0 and mid<=c)) and inside(down) and inside(up)
+        elif self.edge=='down':eligible=inside(down)
         elif self.edge=='up':eligible=inside(up)
         else:
             # Keep both edges in yellow when possible. For very narrow targets,
             # use release timing explicitly rather than adding a random QTE wait.
             both_possible=width-2*margin>abs(v)*self.qte_hold_ms/1000+3
             eligible=inside(down) and inside(up) if both_possible else inside(up)
+        miss_due=self.qte_total+1>=self.qte_next_miss
+        if miss_due and self.rng.random()<.5:
+            # 抢拍式失误：游标尚在黄区前方 6~30px 时提前按下，且松开仍在区外。
+            early=(v>0 and l-30<=down<=l-6 and up<=l-4) or \
+                  (v<0 and r+6<=down<=r+30 and up>=r+4)
+            if early:
+                detail='x=%.1f speed=%.1f down=%.1f up=%.1f target=%.1f..%.1f'%(o.x,v,down,up,l,r)
+                return self._fire_qte(t,o.target,'deliberate_miss(early) '+detail,self.qte_hold_ms)
         if eligible:
+            if miss_due:
+                # 松晚式失误：按下时机正常，按住时间拖长到游标滑出黄区远端。
+                overshoot=self.rng.uniform(4,14)
+                up_goal=(r+margin+overshoot) if v>0 else (l-margin-overshoot)
+                hold=(up_goal-down)/v*1000
+                if 60<=hold<=240:
+                    hold=int(hold)
+                    self.predicted=down+v*hold/1000
+                    detail='x=%.1f speed=%.1f down=%.1f up_goal=%.1f target=%.1f..%.1f'%(o.x,v,down,up_goal,l,r)
+                    return self._fire_qte(t,o.target,'deliberate_miss(late) '+detail,hold)
+                # 时机未到（按住时长窗口外）：等下一帧，不发正常点击，
+                # 否则本轮会被普通点击消耗掉，失误永远排不上。
+                return None
             self.qte_locked=True;self.qte_ack=False;self.left_target=False
             self.qte_time=t;self.clicked_bounds=o.target;self.changed_since=None;self.last_progress=t
+            self.qte_last_fire=t
             return Action('QTE',(295,858),
                           'x=%.1f speed=%.1f down=%.1f up=%.1f target=%.1f..%.1f'%(o.x,v,down,up,l,r),
                           False,self.qte_hold_ms,self.backend)
         return None
+
+    def _fire_qte(self,t,target,reason,hold_ms):
+        """Fire a deliberate-miss QTE tap with the standard round lock + grace flag."""
+        self.qte_locked=True;self.qte_ack=False;self.left_target=False
+        self.qte_time=t;self.clicked_bounds=target;self.changed_since=None;self.last_progress=t
+        self.qte_miss_pending=True;self.qte_last_fire=t
+        self.event('qte_deliberate_miss',style=reason,hold_ms=hold_ms)
+        return Action('QTE',(295,858),reason,False,hold_ms,self.backend)

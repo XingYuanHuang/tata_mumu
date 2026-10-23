@@ -81,9 +81,12 @@ class WindowsIO:
         self.pressed=False;self.pressed_backend='sendinput';self.lock=threading.RLock();self.mutex=None
         assert C.sizeof(INPUT)==(40 if C.sizeof(C.c_void_p)==8 else 28)
 
-    def single_instance(self):
+    def single_instance(self,suffix=''):
+        """Named-mutex guard. 多实例钓鱼时每个 MuMu 实例传独立 suffix，
+        否则全局锁会导致第二个模拟器实例无法启动。桌面工具模式不传 suffix，
+        保持原有全局互斥行为。"""
         C.set_last_error(0)
-        self.mutex=self.k.CreateMutexW(None,False,'Local\\TataFishingDesktopAssistant_v020')
+        self.mutex=self.k.CreateMutexW(None,False,'Local\\TataFishingDesktopAssistant_v020'+suffix)
         if not self.mutex:raise C.WinError(C.get_last_error())
         return C.get_last_error()!=183
     def key(self,vk):return bool(self.u.GetAsyncKeyState(vk)&0x8000)

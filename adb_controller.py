@@ -25,9 +25,14 @@ class ADBInstance:
         self._connected = False
 
     def _run(self, *args, timeout=10):
-        cmd = [self.adb_path, "-s", self.device_serial] + list(args)
-        if not self._connected:
+        # connect/disconnect 是 adb 客户端命令，不针对具体设备，不能带 -s；
+        # 其余命令（get-state/shell/...）必须带 -s——多设备时省略会报
+        # "error: more than one device/emulator"，导致连接确认永远失败
+        no_target = args and args[0] in ("connect", "disconnect")
+        if no_target:
             cmd = [self.adb_path] + list(args)
+        else:
+            cmd = [self.adb_path, "-s", self.device_serial] + list(args)
         try:
             result = subprocess.run(
                 cmd, capture_output=True, text=True, timeout=timeout,
@@ -40,10 +45,18 @@ class ADBInstance:
             return "", str(e), -1
 
     def connect(self):
+        # 设备卡在 offline 状态时，直接 connect 仍会显示 offline，先断开重连
+        out, _, _ = self._run("get-state")
+        if "offline" in out:
+            self._run("disconnect", self.device_serial)
+            time.sleep(0.4)
         out, err, _ = self._run("connect", self.device_serial)
         if "connected" in out or "already connected" in out:
-            self._connected = True
-            return True
+            # connect 成功不代表状态正常，再确认一次
+            out2, _, _ = self._run("get-state")
+            if "device" in out2:
+                self._connected = True
+                return True
         return False
 
     def is_connected(self):
