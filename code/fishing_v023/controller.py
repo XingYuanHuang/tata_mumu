@@ -79,6 +79,10 @@ class Controller:
         self.motion=Motion();self.predicted=None
         self.qte_active=False;self.qte_since=None;self.qte_locked=False;self.qte_ack=False
         self.qte_time=-999.;self.clicked_bounds=None;self.left_target=False
+        self.aim_dt=0.0;self.aim_hits=0          # 按压时机校正量（秒），命中后在线学习
+        self.last_aim_k=None;self.last_aim_v=None # 最近一次窄区点击的搜索偏移/速度
+        self.ack_by_flash=False                   # 本次锁定是否由闪光确认（可靠命中信号）
+        self.nudge_idx=0                          # 同区重试时机偏移搜索步进
         self.flash_last=False;self.flash_end=-999.;self.changed_since=None
         self.qte_hold_ms=45
         self.hook_input_count=0;self.hook_followups=0;self.hook_unverified=0
@@ -390,7 +394,8 @@ class Controller:
             self.qte_active=True;self.qte_since=t;self.motion.reset()
         if t-self.qte_since>38:return self.stop('qte_timeout')
         if o.flash:
-            if self.qte_locked and t-self.qte_time>.025:self.qte_ack=True
+            if self.qte_locked and t-self.qte_time>.025:
+                self.qte_ack=True;self.ack_by_flash=True
             self.flash_last=True;self.motion.reset();self.predicted=None
             self.qte_slow_since=None
             return None
@@ -414,6 +419,23 @@ class Controller:
                          abs(o.x-o.target[0])>23 and abs(o.x-o.target[1])>23)
             if stable_new and clear_edges and t-self.qte_time>.22:self.qte_ack=True
             if self.qte_ack and (stable_new or self.left_target) and t-self.qte_time>.30 and t-self.flash_end>.08:
+                # 命中确认：点击后 1.6s 内游戏给出反馈。闪光是最可靠的命中信号；
+                # 黄区切换需 >15px（识别抖动 ±9px 会造成假"新黄区"，不能学）。
+                # 把本次搜索偏移按当时速度折算成时间校正量，EMA 收敛到 aim_dt，
+                # 之后每个黄区第一 press 就直接用校准后的时机，不再从头搜索。
+                shifted=self.clicked_bounds and o.target and (
+                    abs(o.target[0]-self.clicked_bounds[0])>15 or
+                    abs(o.target[1]-self.clicked_bounds[1])>15)
+                if (not self.qte_miss_pending and self.last_aim_k
+                        and self.last_aim_v and t-self.qte_time<=1.6
+                        and (self.ack_by_flash or shifted)):
+                    dt=self.aim_dt+0.45*self.last_aim_k/self.last_aim_v
+                    self.aim_dt=max(-0.30,min(0.30,dt))
+                    self.aim_hits+=1
+                    self.event('aim_calibrated',k=self.last_aim_k,
+                               dt=round(self.aim_dt,3),hits=self.aim_hits,
+                               via='flash' if self.ack_by_flash else 'shift')
+                self.ack_by_flash=False
                 self.qte_locked=False;self.qte_ack=False;self.left_target=False
                 self.changed_since=None;self.motion.reset();self.last_progress=t
                 self.qte_miss_pending=False;self.qte_last_fire=t
@@ -437,9 +459,11 @@ class Controller:
                     healthy=o.target is not None and o.x is not None
                     if healthy:
                         self.qte_locked=False;self.qte_ack=False;self.left_target=False
-                        self.changed_since=None;self.motion.reset();self.last_progress=t
+                        self.changed_since=None;self.last_progress=t
                         self.qte_miss_pending=False;self.qte_last_fire=t
                         self.qte_no_feedback_count=0
+                        # 同区重试不清运动历史：游标运动连续，清掉后速度估计
+                        # 要重新积累 3 帧才可用，会白白错过 1~2 次发射窗口。
                         self.event('qte_zone_repeat_unlock')
                     elif self.qte_no_feedback_count<2:
                         self.qte_no_feedback_count+=1
@@ -486,21 +510,35 @@ class Controller:
                                   False,self.qte_hold_ms,self.backend)
             return None
         self.qte_slow_since=None
-        l,r=o.target;width=r-l
+        l0,r0=o.target;width=r0-l0
         if width<9:return None
-        delay=self.latency+max(0,min(.12,processing_delay))
-        down=o.x+v*delay;up=down+v*self.qte_hold_ms/1000
         margin=max(2.5,min(10,width*.14))
+        # aim_dt：全局按压时机校正（秒）。QTE 触点是固定屏幕位置，游戏判定的是
+        # 按压时刻鱼是否在黄区内——位置瞄准无意义，本质是时机问题。三实例并行
+        # 时帧龄+触控传输延迟会让时机系统性偏移，宽区容错大看不出来，窄区必丢。
+        # 校正值由命中反馈在线学习（见 qte_ack 解锁处），随会话自适应。
+        delay=self.latency+max(0,min(.12,processing_delay))+self.aim_dt
+        down=o.x+v*delay;up=down+v*self.qte_hold_ms/1000
         self.predicted=up
-        inside=lambda x:l+margin<=x<=r-margin
+        inside=lambda x:l0+margin<=x<=r0-margin
+        # 同一黄区点击后无反馈（大概率未命中）→ 按压时机偏移搜索：
+        # 0→+12→-12→+26→-26→+45→-45（px 等效，±45px≈±0.22s@200px/s），
+        # 换新黄区后从全局校准值重新开始。
+        same=(self.clicked_bounds is not None
+              and abs(self.clicked_bounds[0]-l0)<6 and abs(self.clicked_bounds[1]-r0)<6)
+        seq=(0,12,-12,26,-26,45,-45)
+        idx=self.nudge_idx if same else 0
+        k=seq[min(idx,len(seq)-1)]
         if width<65:
-            # 小黄区：贴边点击容错极差（速度估计差 5~10px 即出界，日志实测
-            # 30px 区连点 3 次被游戏拒绝）。不等“刚进区”就抢点，而是等按压
-            # 中点越过区中心再发射，让按下/松开对称骑在中心两侧；若一帧内
-            # 已滑过中心太深（inside 检查不通过）则放弃本次，等下一趟折返。
+            # 窄区：等预测按压中点越过（区中心+搜索偏移）即出手。不做 inside()
+            # 硬约束——触点位置固定，按下时扫描段超出视觉区不影响游戏判定，
+            # 且硬约束会把发射窗口压到 ~40ms，帧率不足时永远等不到（实测
+            # 看门狗暴涨）。穿越后 25px 容错带内都允许出手，错过精确穿越点
+            # 也能补上；预测位置离区太远说明这帧不该出手，等折返。
             mid=down+v*self.qte_hold_ms/2000
-            c=(l+r)/2
-            eligible=((v>0 and mid>=c)or(v<0 and mid<=c)) and inside(down) and inside(up)
+            c=(l0+r0)/2+k
+            if v>0:eligible=c-6<=mid<=c+25
+            else:eligible=c-25<=mid<=c+6
         elif self.edge=='down':eligible=inside(down)
         elif self.edge=='up':eligible=inside(up)
         else:
@@ -511,21 +549,21 @@ class Controller:
         miss_due=self.qte_total+1>=self.qte_next_miss
         if miss_due and self.rng.random()<.5:
             # 抢拍式失误：游标尚在黄区前方 6~30px 时提前按下，且松开仍在区外。
-            early=(v>0 and l-30<=down<=l-6 and up<=l-4) or \
-                  (v<0 and r+6<=down<=r+30 and up>=r+4)
+            early=(v>0 and l0-30<=down<=l0-6 and up<=l0-4) or \
+                  (v<0 and r0+6<=down<=r0+30 and up>=r0+4)
             if early:
-                detail='x=%.1f speed=%.1f down=%.1f up=%.1f target=%.1f..%.1f'%(o.x,v,down,up,l,r)
+                detail='x=%.1f speed=%.1f down=%.1f up=%.1f target=%.1f..%.1f'%(o.x,v,down,up,l0,r0)
                 return self._fire_qte(t,o.target,'deliberate_miss(early) '+detail,self.qte_hold_ms)
         if eligible:
             if miss_due:
                 # 松晚式失误：按下时机正常，按住时间拖长到游标滑出黄区远端。
                 overshoot=self.rng.uniform(4,14)
-                up_goal=(r+margin+overshoot) if v>0 else (l-margin-overshoot)
+                up_goal=(r0+margin+overshoot) if v>0 else (l0-margin-overshoot)
                 hold=(up_goal-down)/v*1000
                 if 60<=hold<=240:
                     hold=int(hold)
                     self.predicted=down+v*hold/1000
-                    detail='x=%.1f speed=%.1f down=%.1f up_goal=%.1f target=%.1f..%.1f'%(o.x,v,down,up_goal,l,r)
+                    detail='x=%.1f speed=%.1f down=%.1f up_goal=%.1f target=%.1f..%.1f'%(o.x,v,down,up_goal,l0,r0)
                     return self._fire_qte(t,o.target,'deliberate_miss(late) '+detail,hold)
                 # 时机未到（按住时长窗口外）：等下一帧，不发正常点击，
                 # 否则本轮会被普通点击消耗掉，失误永远排不上。
@@ -533,8 +571,16 @@ class Controller:
             self.qte_locked=True;self.qte_ack=False;self.left_target=False
             self.qte_time=t;self.clicked_bounds=o.target;self.changed_since=None;self.last_progress=t
             self.qte_last_fire=t
+            if width<65:
+                # 记录本次搜索偏移：若 1.6s 内游戏确认（闪光/黄区切换），
+                # 在 qte_ack 解锁处把 k/v 折算成时间校正量存入 aim_dt。
+                self.last_aim_k=k;self.last_aim_v=abs(v);self.ack_by_flash=False
+                if same:self.nudge_idx=min(self.nudge_idx+1,len(seq)-1)
+                else:self.nudge_idx=1
+            else:
+                self.last_aim_k=None
             return Action('QTE',(295,858),
-                          'x=%.1f speed=%.1f down=%.1f up=%.1f target=%.1f..%.1f'%(o.x,v,down,up,l,r),
+                          'x=%.1f speed=%.1f down=%.1f up=%.1f target=%.1f..%.1f k=%+d dt=%+.2f'%(o.x,v,down,up,l0,r0,k,self.aim_dt),
                           False,self.qte_hold_ms,self.backend)
         return None
 

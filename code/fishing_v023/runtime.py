@@ -199,6 +199,7 @@ class Runner:
                 n=0;fps=0.;rate_started=time.perf_counter();last_preview=0.;last_memory=0.
                 speed_started=rate_started;last_speed=rate_started
                 slow_since=None;last_visibility=0.;last_backend=None
+                prev_t0=None;perf_cycles=[];perf_ages=[];last_perf=rate_started
                 while not self.cancel.is_set():
                     loop=time.perf_counter()
                     problem=self.native.guard_reason(self.hwnd)
@@ -237,6 +238,16 @@ class Runner:
                     else:
                         obs=vision.analyze(frame,captured,raw)
                     age=time.perf_counter()-captured
+                    # 帧周期/识别耗时自测：每 15 秒输出一条 PERF 统计，
+                    # 用于区分"我们处理慢"（识别耗时大）与"MuMu 出帧慢"（帧周期大）。
+                    if prev_t0 is not None:perf_cycles.append(t0-prev_t0)
+                    prev_t0=t0;perf_ages.append(age)
+                    if loop-last_perf>15. and perf_cycles:
+                        cs=sorted(perf_cycles);as_=sorted(perf_ages);m=len(cs)
+                        self.session.log('PERF 帧周期中位=%dms p75=%dms p95=%dms | 识别耗时中位=%dms p95=%dms | 样本=%d'%(
+                            cs[m//2]*1000,cs[min(int(m*.75),m-1)]*1000,cs[min(int(m*.95),m-1)]*1000,
+                            as_[m//2]*1000,as_[min(int(m*.95),m-1)]*1000,m))
+                        perf_cycles=[];perf_ages=[];last_perf=loop
                     self.session.latest=frame;self.session.obs=obs
                     if after_input:
                         self.session.keyframe('after_'+after_input,frame,obs);after_input=None
@@ -250,11 +261,17 @@ class Runner:
                             self.post('record',self.record_payload(frame,obs))
                     if self.settings.mode!='observe' and not self._paused:
                         if obs.state=='QTE' and age>.14:
-                            if slow_since is None:slow_since=captured
-                            if captured-slow_since>1.2:raise StopRun('slow_capture')
+                            # 截图/识别耗时过大时只暂停 QTE 出手（旧画面点击必脱靶），
+                            # 不再停止会话；负载降低后自动恢复，适合长时间挂机。
+                            if slow_since is None:
+                                slow_since=captured
+                                self.session.log(tr('slow_capture'))
                             self.ctl.motion.reset();act=None
                         else:
-                            slow_since=None
+                            if slow_since is not None:
+                                if captured-slow_since>2.0:
+                                    self.session.log(tr('capture_recovered'))
+                                slow_since=None
                             act=self.ctl.step(obs,captured,age,counters_similar(counter_before,counter_crop(frame)))
                         for code,info in self.ctl.drain_events():
                             self.session.log(tr(code)+' '+tr(info.get('kind',''))+' '+str(info))

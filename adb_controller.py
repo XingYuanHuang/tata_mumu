@@ -115,24 +115,15 @@ class ADBInstance:
 
 
 def find_mumu_adb(adb_path=None):
-    """查找 MuMu 自带 adb"""
+    """查找 MuMu 自带 adb（统一委托 mumu_discover，避免两份候选路径漂移）"""
     if adb_path:
         return adb_path
-    possible = [
-        os.path.join(os.environ.get("ProgramFiles", "C:\\Program Files"),
-                     "Netease", "MuMuPlayer-12.0", "shell", "adb.exe"),
-        os.path.join(os.environ.get("ProgramFiles(x86)", "C:\\Program Files (x86)"),
-                     "Netease", "MuMuPlayer-12.0", "shell", "adb.exe"),
-        os.path.join(os.environ.get("LOCALAPPDATA", ""),
-                     "Programs", "Netease", "MuMuPlayer-12.0", "shell", "adb.exe"),
-        "D:\\Program Files\\Netease\\MuMuPlayer-12.0\\shell\\adb.exe",
-        "E:\\Program Files\\Netease\\MuMuPlayer-12.0\\shell\\adb.exe",
-    ]
-    for path in possible:
-        if os.path.isfile(path):
-            return path
-    system_adb = shutil.which("adb")
-    return system_adb or "adb"
+    try:
+        from mumu_discover import find_mumu_adb as _discover_adb
+        return _discover_adb()
+    except Exception:
+        import shutil
+        return shutil.which("adb") or "adb"
 
 
 class ADBManager:

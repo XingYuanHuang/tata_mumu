@@ -62,7 +62,8 @@ TEXT={
  'qte_timeout':'QTE \u8d85\u65f6\uff0c\u5df2\u505c\u6b62\uff0c\u4e0d\u91cd\u590d\u4e71\u70b9\u3002',
  'qte_no_feedback':'QTE \u70b9\u51fb\u540e\u672a\u8bc6\u522b\u5230\u672c\u8f6e\u53cd\u9988\u6216\u65b0\u9ec4\u533a\uff0c\u5df2\u505c\u6b62\u3002\u8bca\u65ad\u5305\u5df2\u4fdd\u7559\u5173\u952e\u5e27\u3002',
  'time_limit':'\u8fd0\u884c\u65f6\u957f\u4e0d\u518d\u8bbe\u4e00\u5c0f\u65f6\u81ea\u52a8\u505c\u6b62\u3002',
- 'slow_capture':'\u622a\u56fe\u5ef6\u8fdf\u8fde\u7eed\u8fc7\u5927\uff0c\u5df2\u6682\u505c QTE \u8f93\u5165\u3002\u8bf7\u51cf\u8f7b\u7535\u8111\u8d1f\u8f7d\u540e\u91cd\u8bd5\u3002',
+ 'slow_capture':'\u622a\u56fe\u5ef6\u8fdf\u8fc7\u5927\uff0c\u6682\u505c QTE \u51fa\u624b\uff0c\u8d1f\u8f7d\u964d\u4f4e\u540e\u81ea\u52a8\u6062\u590d\uff08\u4f1a\u8bdd\u4e0d\u4e2d\u65ad\uff09\u3002',
+ 'capture_recovered':'\u622a\u56fe\u5ef6\u8fdf\u5df2\u6062\u590d\uff0c\u7ee7\u7eed QTE \u8f93\u5165\u3002',
  'error':'\u7a0b\u5e8f\u9047\u5230\u9519\u8bef\uff0c\u5df2\u505c\u6b62\u5e76\u4fdd\u5b58\u8bca\u65ad\uff1a',
  'bad_settings':'\u6b21\u6570\u8bf7\u586b 1\u2013999 \u7684\u6574\u6570\uff0c\u5ef6\u8fdf\u8bf7\u586b 0\u2013180 \u7684\u6709\u6548\u6570\u5b57\u3002',
  'exported':'\u8bca\u65ad\u5305\u5df2\u4fdd\u5b58\u3002\u5305\u5185\u53ea\u6709\u6e38\u620f\u622a\u56fe\u3001\u672c\u6b21\u65e5\u5fd7\u548c\u8fd0\u884c\u8bbe\u7f6e\uff0c\u4e0d\u4f1a\u81ea\u52a8\u4e0a\u4f20\u3002',
@@ -86,6 +87,6 @@ TEXT.update({'RESULT': '\u6536\u9c7c\u5c55\u793a\u5361\uff1a\u7b49\u5f85\u70b9\u
 
 TEXT.update({'CONTINUE': '疑似收鱼页：尝试点击空白处继续', 'RESULT': '收鱼结算：自动点击继续', 'RECORD': '纪录结算：自动点击继续', 'collect_skipped': '结算页已消失，取消过期点击并重新识别', 'result_stuck': '结算页已有限重试，但界面仍无响应。已停止避免无限连点，可导出诊断。', 'retry': '界面仍在，再次点击（有次数上限）', 'intro': '打开钓鱼界面或收鱼卡，点开始。各种纪录卡统一点击继续。'})
 
-TEXT.update({'RECOVER':'未知画面：点击空白继续','unknown_screen_stuck':'空白处已尝试三次仍无响应，任务已停止，请检查游戏画面。','UNKNOWN':'未知画面：短暂等待后尝试点击空白','qte_deliberate_miss':'QTE 人为失误（节奏拟真）','qte_miss_grace_unlock':'失误后本轮未结束，宽限解锁继续瞄准','paused':'已暂停：不发送任何输入，点继续恢复','resumed':'已继续运行','paused_drop':'暂停作废在途输入','BAIT':'点击鱼饵包','BAIT2':'点击打窝确认撒饵','bait_popup_seen':'撒饵弹窗已弹出：点击打窝','bait_stop_pending':'等级满/鱼饵耗尽待二次确认','bait_failed':'撒饵未生效：跳过本次，30秒后重试（钓鱼不中断）','bait_spread':'撒饵已生效','bait_reactivate':'打窝等级已衰减，重新激活撒饵','qte_zone_repeat_unlock':'同一黄区重复轮：识别健康，继续瞄准不误停'})
+TEXT.update({'RECOVER':'未知画面：点击空白继续','unknown_screen_stuck':'空白处已尝试三次仍无响应，任务已停止，请检查游戏画面。','UNKNOWN':'未知画面：短暂等待后尝试点击空白','qte_deliberate_miss':'QTE 人为失误（节奏拟真）','qte_miss_grace_unlock':'失误后本轮未结束，宽限解锁继续瞄准','paused':'已暂停：不发送任何输入，点继续恢复','resumed':'已继续运行','paused_drop':'暂停作废在途输入','BAIT':'点击鱼饵包','BAIT2':'点击打窝确认撒饵','bait_popup_seen':'撒饵弹窗已弹出：点击打窝','bait_stop_pending':'等级满/鱼饵耗尽待二次确认','bait_failed':'撒饵未生效：跳过本次，30秒后重试（钓鱼不中断）','bait_spread':'撒饵已生效','bait_reactivate':'打窝等级已衰减，重新激活撒饵','qte_zone_repeat_unlock':'同一黄区重复轮：识别健康，继续瞄准不误停','aim_calibrated':'窄区命中确认：按压时机校准已更新'})
 
 def tr(key):return TEXT.get(key,key)

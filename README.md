@@ -154,13 +154,24 @@ claimed    结果页 / 领奖弹窗 → 点「好的」/下方 X → 回找朋�
 
 ### 自动登记
 
-不需要在 `config.py` 里写死实例：
+不需要在 `config.py` 里写死实例。自动检测按以下顺序查找 MuMu 安装目录
+（跨机器通用，详见《环境设置指引.md》）：
 
-1. 自动扫描 `ProgramFiles\Netease\MuMuPlayer-12.0`
-2. 读 `vms/*/configs/vm_config.json` 拿每个实例 ADB 端口
-3. 生成 IPC 配置、连接 MuMu 原生 SDK
-4. **发现几个就登记几个**（第 3、第 4 个模拟器打开就能显示，新增实例默认角色=小号）
-5. 新实例默认角色可在面板下拉框改成主号
+1. 环境变量 `MUMU_ROOT`（手动指定安装根目录）
+2. 项目目录 `mumu_path.txt`（第一行写安装根目录，装在自定义目录时用）
+3. Windows 注册表卸载信息（DisplayName 含 MuMu）
+4. 常见安装路径 + 全盘扫描（Program Files / LOCALAPPDATA / 各盘符下的 Netease 目录）
+
+找到目录后：
+
+1. 扫 `vms/*/configs/vm_config.json` 拿每个实例 ADB 端口（缺失时用
+   `MuMuManager.exe` 官方 CLI 兜底枚举）
+2. 生成 IPC 配置、连接 MuMu 原生 SDK
+3. **发现几个就登记几个**（第 3、第 4 个模拟器打开就能显示，新增实例默认角色=小号）
+4. 新实例默认角色可在面板下拉框改成主号
+
+查找失败时日志会打印完整诊断过程和修复提示；也可运行 `python check_env.py`
+或 `python mumu_discover.py` 单独查看。
 
 MuMu 12 多开的 ADB 端口按 **+32** 递增：16384 / 16416 / 16448 …
 
@@ -192,7 +203,9 @@ MuMu 12 多开的 ADB 端口按 **+32** 递增：16384 / 16416 / 16448 …
 | `visit_engine.py` | 巡访执行器：MuMu SDK 截图 + OpenCV 匹配 + 状态机 + 重试 + 失败截图 |
 | `task_handler.py` | 双通道串行队列（主号/小号），UID 去重，小号→主号同步，横屏过滤 |
 | `adb_controller.py` | ADB 多实例管理，动态切换主号/小号角色 |
-| `mumu_discover.py` | MuMu 自动发现，扫描安装目录，生成 IPC 配置 |
+| `mumu_discover.py` | MuMu 自动发现（环境变量/mumu_path.txt/注册表/全盘扫描 + MuMuManager 兜底），生成 IPC 配置 |
+| `check_env.py` | 环境自检脚本（新机器先跑，stdlib 免依赖，带修复提示） |
+| `环境设置指引.md` | 新用户从零部署指引 |
 | `monitor.py` | 微信消息读取（Windows UIAutomation） |
 | `qq_monitor.py` | QQ 消息读取（Windows UIAutomation，默认群「塔塔夺金MVP」） |
 | `excel_reader.py` | Excel 全表扫描 UID + 去重 + processed 标记 |
@@ -213,6 +226,8 @@ MuMu 12 多开的 ADB 端口按 **+32** 递增：16384 / 16416 / 16448 …
 
 ## 八、安装与运行
 
+> 新机器部署请先看《环境设置指引.md》，并运行 `python check_env.py` 自检。
+
 ```bash
 # 依赖（已配置清华镜像源，文件在 %APPDATA%\pip\pip.ini）
 pip install -r requirements.txt
@@ -221,6 +236,11 @@ python server.py
 ```
 
 浏览器打开 `http://localhost:8000`
+
+> **注意：「启动服务」≠「启动监控」。** `server.py` 启动的只是 Web 面板和各执行器的待命状态，
+> **总攻监控、消息监控（巡访队列）、Excel 扫描等所有自动化开关都不会自动开启**，
+> 必须由用户在面板上手动点击（或调对应 `/api/*/start` 接口）。
+> 不要在启动服务时代用户开启任何监控——模拟器画面用户可能正在手动操作。
 
 依赖：`uiautomation, psutil, fastapi, uvicorn, websockets, openpyxl, opencv-python-headless, numpy, python-multipart`
 
@@ -478,15 +498,25 @@ bridge.py       子进程入口：stdin 收 stop/pause/resume，stdout 输出 JS
 - 优先级保证：正常预测点击（<1s）→ slow_drift（1.2s）→ 看门狗（5s+），互不抢占
 - 离线仿真：`_test_qte_fallback.py`（不发真实输入）
 
-### QTE 小黄区中心瞄准（准确率优化）
+### QTE 窄区时机校准（准确率优化）
 
-窄黄区（宽 <65px）贴边点击容错极差——速度估计差 5~10px 就出界，实测 30px 小区
-连点 3 次均被游戏拒绝。现为宽区/窄区两套发射策略：
+关键认知：QTE 触点是**固定屏幕位置**（按压条），游戏判定的是**按压时刻鱼是否在
+黄区内**——位置瞄准无意义，本质是**按压时机**问题。三实例并行时帧龄+触控传输
+延迟造成系统性偏移，宽区容错大看不出来，窄区必丢。策略：
 
 - **宽区（≥65px）**：维持原策略，预测点一进区（留 14% 边距）即尽早点击
-- **窄区（<65px）**：等**按压中点**（按下与松开的中时刻位置）越过区中心才发射，
-  使按下/松开对称骑在中心两侧；若一帧内已滑过中心太深则放弃本次，等下一趟折返
-- 离线仿真：`_test_qte_center.py`（正向/反向/低帧率/大区回归，均不发真实输入）
+- **窄区（<65px）**：等预测按压中点越过（区中心+搜索偏移）即出手，穿越后
+  25px 容错带内均可补射（不做 inside() 硬约束，避免发射窗口被压到 ~40ms
+  导致帧采不到、看门狗兜底瞎点）
+- **同区重试搜索**：点击后无反馈（未命中）→ 偏移序列 0→+12→-12→+26→-26→
+  +45→-45 px（≈±0.22s@200px/s），换新黄区后从全局校准值重新开始
+- **命中在线学习**：点击后 1.6s 内闪光确认/黄区切换>15px 判定为命中，把该次
+  偏移按速度折算成时间校正量 `aim_dt`（EMA 0.45，限 ±0.30s），之后每个黄区
+  第一 press 直接用校准时机；识别抖动（±9px）造成的假"新黄区"不会误学
+- **同区重试不清运动历史**：游标运动连续，清掉后速度估计要重新积累 3 帧才
+  可用，会白白错过 1~2 次发射窗口
+- 离线仿真：`_test_qte_nudge.py`（时机搜索+学习闭环）、`_test_qte_center.py`，
+  均不发真实输入
 
 ### QTE 快速通道（多实例性能优化）
 
