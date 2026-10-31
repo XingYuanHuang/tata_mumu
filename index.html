@@ -51,6 +51,7 @@ main{max-width:1400px;margin:0 auto;padding:0 30px 30px}
 .pill{font-size:11px;padding:4px 9px;border-radius:10px;background:#eeeaf5;color:#81738f}
 .pill.on{background:#e7f7ef;color:var(--green)}
 .pill.off{background:#f5e8ea;color:var(--red)}
+.pill.warn{background:#fbf3e3;color:var(--orange)}
 .inst-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:10px}
 .inst-card{border:1px solid var(--border);border-radius:10px;padding:12px;text-align:center}
 .inst-card .inst-name{font-size:13px;font-weight:bold;margin-bottom:6px}
@@ -60,6 +61,7 @@ main{max-width:1400px;margin:0 auto;padding:0 30px 30px}
 .inst-card .inst-conn{font-size:11px;margin-top:4px}
 .dot{width:8px;height:8px;border-radius:50%;display:inline-block;margin-right:4px}
 .dot-on{background:var(--green)}.dot-off{background:var(--red)}
+.dot-warn{background:var(--orange)}
 .msg-list{max-height:200px;overflow:auto}
 .msg-item{padding:6px 10px;margin-bottom:4px;border-radius:6px;font-size:12px;display:flex;gap:8px;align-items:center;border-left:3px solid #ddd}
 .msg-item.hit{border-left-color:var(--orange);background:#fffbf0}
@@ -70,6 +72,13 @@ main{max-width:1400px;margin:0 auto;padding:0 30px 30px}
 .msg-item .msg-time{font-size:10px;color:var(--muted);margin-left:auto;white-space:nowrap}
 .hit-badge{background:var(--orange);color:#fff;font-size:10px;padding:1px 6px;border-radius:4px;font-weight:bold}
 .task-list{max-height:400px;overflow:auto}
+.chan-grid{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+@media (max-width:1100px){.chan-grid{grid-template-columns:1fr}}
+.chan-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;padding-bottom:6px;border-bottom:1px solid var(--border)}
+.chan-title{font-size:13px;font-weight:bold}
+.chan-title.chan-main{color:var(--purple)}
+.chan-title.chan-worker{color:var(--green)}
+.chan-stat{font-size:11px;color:var(--muted)}
 .task-item{border:1px solid var(--border);border-radius:10px;padding:10px 14px;margin-bottom:8px}
 .task-item .task-top{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
 .task-item .digit-id{font-size:17px;font-weight:bold;color:var(--purple);font-family:Consolas,monospace;min-width:145px}
@@ -78,6 +87,7 @@ main{max-width:1400px;margin:0 auto;padding:0 30px 30px}
 .src-qq{background:#dbeafe;color:#2563eb}
 .src-excel{background:#fef3e7;color:var(--orange)}
 .src-sync{background:#ede9fe;color:#7c3aed}
+.src-manual{background:#fde9f2;color:#a8336e}
 .task-item .task-ch{font-size:10px;padding:2px 6px;border-radius:3px;background:#f0ecfa;color:#79639f}
 .task-item .task-st{font-size:11px;padding:3px 10px;border-radius:4px;font-weight:bold}
 .st-pending{background:#fef3e7;color:var(--orange)}
@@ -108,6 +118,7 @@ footer{font-size:11px;color:#a59aaf;text-align:center;padding:4px 10px 24px}
   <div class="row">
     <button class="primary" id="btn-detect" onclick="autoDetect()">自动检测环境</button>
     <button class="quiet" id="btn-adb" onclick="connectADB()">连接全部ADB</button>
+    <button class="primary" id="btn-zonggong" onclick="toggleZonggong()">启动总攻监控</button>
     <button class="danger" id="btn-stop-all" onclick="stopAll()" disabled>停止全部</button>
   </div>
 </header>
@@ -155,6 +166,32 @@ footer{font-size:11px;color:#a59aaf;text-align:center;padding:4px 10px 24px}
         <div class="progress"><div id="progress-fill"></div></div>
       </div>
 
+      <!-- 手动巡访（测试流程用） -->
+      <div class="card">
+        <h2><span class="step">3</span>手动巡访（直接试流程）</h2>
+        <div class="row" style="margin-bottom:8px">
+          <input id="manual-uid" class="grow" placeholder="输入 UID（8位数字），如 10813721"
+                 autocomplete="off" onkeydown="if(event.key==='Enter')submitManualVisit()">
+          <select id="manual-inst" style="width:auto"></select>
+        </div>
+        <div class="row">
+          <button class="primary" id="btn-manual" onclick="submitManualVisit()">让主号去领取</button>
+          <button class="quiet" id="btn-home" onclick="submitHomeVisit()">只进家园</button>
+          <label style="font-size:12px;color:var(--muted);display:flex;align-items:center;gap:5px;cursor:pointer">
+            <input type="checkbox" id="manual-force" checked>忽略已处理记录
+          </label>
+          <span id="manual-msg" style="font-size:12px"></span>
+        </div>
+        <div class="row" style="margin-top:10px">
+          <span style="font-size:12px;color:var(--muted)">🏠 进家园记录（<span id="home-count">0</span>，重复的不会进）</span>
+          <button class="quiet" style="margin-left:auto;font-size:12px" onclick="clearHomeRecords()">清空进家园记录</button>
+        </div>
+        <div class="msg-list" id="home-records" style="max-height:170px;margin-top:6px">
+          <div class="empty">点「只进家园」让主号进对方家园并领礼盒，领完停在家园（重复的不会进）</div>
+        </div>
+        <div class="hint">「让主号去领取」走完整的「搜索 → 拜访 → 领礼盒 → 选择祝福」流程，进<strong>主号通道</strong>队列；「只进家园」进对方家园并领礼盒，领完<strong>停在家园</strong>由你手动退出，独立执行不进队列，进成功过的 UID 不会重复进（记录见上，可清空后重进）。</div>
+      </div>
+
       <!-- 消息流 -->
       <div class="card">
         <h2>消息流</h2>
@@ -163,11 +200,28 @@ footer{font-size:11px;color:#a59aaf;text-align:center;padding:4px 10px 24px}
         </div>
       </div>
 
-      <!-- 巡访任务列表 -->
+      <!-- 巡访任务列表（主号 / 小号 两个通道分开显示） -->
       <div class="card">
         <h2>巡访任务列表</h2>
-        <div class="task-list" id="task-list">
-          <div class="empty">收到UID后自动入队，按主号/小号通道串行执行</div>
+        <div class="chan-grid">
+          <div class="chan-col">
+            <div class="chan-head">
+              <span class="chan-title chan-main">主号通道 · 领取</span>
+              <span class="chan-stat" id="ch-stat-main">—</span>
+            </div>
+            <div class="task-list" id="task-list-main">
+              <div class="empty">微信群/QQ群消息的 UID 会进这里，执行完整领取流程</div>
+            </div>
+          </div>
+          <div class="chan-col">
+            <div class="chan-head">
+              <span class="chan-title chan-worker">小号通道 · 查找</span>
+              <span class="chan-stat" id="ch-stat-worker">—</span>
+            </div>
+            <div class="task-list" id="task-list-worker">
+              <div class="empty">Excel 轮询到的 UID 会进这里，只查找不领取</div>
+            </div>
+          </div>
         </div>
       </div>
     </section>
@@ -243,6 +297,7 @@ footer{font-size:11px;color:#a59aaf;text-align:center;padding:4px 10px 24px}
 let ws=null, monitoring=false, excelRunning=false;
 const messages=[], tasks={};
 const MAX_MSGS=80;
+let UID_LEN=8;  // 从 /api/status 同步
 
 function connectWS(){
   const proto=location.protocol==='https:'?'wss':'ws';
@@ -256,6 +311,7 @@ function connectWS(){
       case 'message':handleMsg(m);break;
       case 'task_status':handleTask(m.data);break;
       case 'log':handleLog(m.data);break;
+      case 'home_record':handleHomeRecord(m.data);break;
     }
   };
 }
@@ -266,9 +322,12 @@ function handleInit(d){
   updatePill('adb',d.instances&&Object.values(d.instances).some(i=>i.connected));
   monitoring=d.monitor_running;excelRunning=d.excel_running;
   updateButtons();
+  if(d.uid_length)UID_LEN=d.uid_length;
   if(d.instances)renderInstances(d.instances);
+  if(d.instances)renderManualTargets(d.instances);
   if(d.visit_engines?.length)renderEngines(d.visit_engines);
   updateStats(d.stats);
+  if(d.home){_homeRecords=d.home.records||[];renderHomeRecords();}
 }
 
 function handleConn(m){
@@ -276,13 +335,30 @@ function handleConn(m){
   if(m.platform==='QQ')updatePill('qq',m.status==='online');
 }
 
-function updatePill(name,on){
+const PILL_LABEL={wechat:'微信',qq:'QQ',adb:'ADB'};
+// state: 'ok' 可用 / 'blocked' 窗口在但读不到 / 'off' 未检测；兼容布尔值
+function updatePill(name,state){
   const el=document.getElementById(name+'-pill');
-  el.className='pill '+(on?'on':'off');
-  el.innerHTML=`<span class="dot ${on?'dot-on':'dot-off'}"></span>${name}${on?'已连接':'未检测'}`;
+  if(!el)return;
+  const s=(state===true)?'ok':(state===false||state==null)?'off':state;
+  const cls=s==='ok'?'on':(s==='blocked'?'warn':'off');
+  const dot=s==='ok'?'dot-on':(s==='blocked'?'dot-warn':'dot-off');
+  const txt=s==='ok'?'已连接':(s==='blocked'?'窗口在·读不到':'未检测');
+  el.className='pill '+cls;
+  el.innerHTML=`<span class="dot ${dot}"></span>${PILL_LABEL[name]||name}${txt}`;
 }
 
+// 结构签名：实例名/角色/是否已连接引擎。结构不变时**绝不重建 DOM**——
+// 重建会把截图元素销毁重建（画面闪烁）、清空 IPC 输入框、重置下拉选择，
+// 看起来就像整屏刷新（每 3 秒一次，体验极差）。
+let _instSig='';
 function renderInstances(instances){
+  const engines=window._visitEngines||[];
+  const sig=Object.entries(instances)
+    .map(([k,v])=>`${k}:${v.role}:${engines.includes(k)?1:0}`).join('|');
+  if(sig===_instSig){updateInstancesDynamic(instances);return;}
+  _instSig=sig;
+
   const el=document.getElementById('instances');
   el.innerHTML=Object.entries(instances).map(([k,v])=>{
     const dot=v.connected?'dot-on':'dot-off';
@@ -292,17 +368,16 @@ function renderInstances(instances){
     const selw=v.role==='worker'?'selected':'';
     return `<div class="inst-card">
       <div class="inst-name">${k}</div>
-      <select class="role-select" onchange="changeRole('${k}',this.value)">
+      <select class="role-select" id="role-${k}" onchange="changeRole('${k}',this.value)">
         <option value="main" ${sel}>主号</option>
         <option value="worker" ${selw}>小号</option>
       </select>
-      <div class="inst-conn"><span class="dot ${dot}"></span>${v.connected?'已连接':'未连接'} · ${v.port}</div>
+      <div class="inst-conn" id="conn-${k}"><span class="dot ${dot}"></span><span class="conn-txt">${v.connected?'已连接':'未连接'}</span> · ${v.port}</div>
     </div>`;
   }).join('');
 
   // 同时渲染每个实例的模拟器画面预览区域（带IPC配置输入）
   const pv=document.getElementById('previews');
-  const engines=window._visitEngines||[];
   pv.innerHTML=Object.entries(instances).map(([k,v])=>{
     const rtxt=v.role==='main'?'主号':'小号';
     const dot=v.connected?'dot-on':'dot-off';
@@ -310,7 +385,7 @@ function renderInstances(instances){
     return `<div style="border:1px solid var(--border);border-radius:10px;overflow:hidden">
       <div style="display:flex;justify-content:space-between;align-items:center;padding:8px 12px;background:#f9f8fc">
         <span style="font-size:13px;font-weight:bold">${k} <span class="pill ${hasEngine?'on':'off'}" style="font-size:10px">${rtxt}</span></span>
-        <span style="font-size:11px;color:var(--muted)"><span class="dot ${dot}"></span>${v.connected?'已连接':'未连接'}</span>
+        <span style="font-size:11px;color:var(--muted)"><span class="dot ${dot}" id="pv-dot-${k}"></span><span id="pv-conn-${k}">${v.connected?'已连接':'未连接'}</span></span>
       </div>
       <div class="preview" id="preview-${k}" style="min-height:120px;border-radius:0">
         ${hasEngine?'<img id="screen-'+k+'" style="width:100%;display:block" alt="截图加载中…">':'<div class="preview-empty">未连接，请填写IPC配置</div>'}
@@ -329,7 +404,30 @@ function renderInstances(instances){
   }).join('');
 }
 
+// 结构未变时的原地更新：只改状态点/连接文字，不碰输入框和截图元素
+function updateInstancesDynamic(instances){
+  for(const [k,v] of Object.entries(instances)){
+    const dot=v.connected?'dot-on':'dot-off';
+    const conn=document.getElementById('conn-'+k);
+    if(conn){
+      const d=conn.querySelector('.dot'); if(d)d.className='dot '+dot;
+      const t=conn.querySelector('.conn-txt'); if(t)t.textContent=v.connected?'已连接':'未连接';
+    }
+    const role=document.getElementById('role-'+k);
+    // 用户正在操作下拉时不覆盖它
+    if(role&&document.activeElement!==role&&role.value!==v.role)role.value=v.role;
+    const pdot=document.getElementById('pv-dot-'+k);
+    if(pdot)pdot.className='dot '+dot;
+    const ptxt=document.getElementById('pv-conn-'+k);
+    if(ptxt)ptxt.textContent=v.connected?'已连接':'未连接';
+  }
+}
+
+let _engSig=null;
 function renderEngines(engines){
+  const sig=(engines||[]).join('|');
+  if(sig===_engSig)return;   // 没变化就别动 DOM
+  _engSig=sig;
   const el=document.getElementById('engine-status');
   if(engines.length){
     el.innerHTML=`已初始化: ${engines.map(e=>`<span class="pill on" style="margin:2px">${e}</span>`).join('')}`;
@@ -388,37 +486,73 @@ function handleTask(t){
   fetchStats();
 }
 
+let _taskSigs={main:null,worker:null};
+
+// 通道标签 / 空列表文案 / 状态统计
+const CH_META={
+  main:{empty:'微信群/QQ群消息的 UID 会进这里，执行完整领取流程'},
+  worker:{empty:'Excel 轮询到的 UID 会进这里，只查找不领取'}
+};
+
 function renderTasks(){
-  const el=document.getElementById('task-list');
-  const arr=Object.values(tasks).sort((a,b)=>b.task_id.localeCompare(a.task_id));
-  if(!arr.length){el.innerHTML='<div class="empty">收到UID后自动入队，按主号/小号通道串行执行</div>';return}
+  const arr=Object.values(tasks);
   const stMap={pending:'st-pending',running:'st-running',done:'st-done',error:'st-error'};
   const stTxt={pending:'等待中',running:'执行中',done:'已完成',error:'失败'};
-  const chTxt={main:'主号通道',worker:'小号通道'};
-  const srcMap={'微信':'src-wechat','QQ':'src-qq','Excel':'src-excel'};
-  el.innerHTML=arr.map(t=>{
-    const scls=t.source?.includes('同步')?'src-sync':(srcMap[t.source]||'src-wechat');
-    const stcls=stMap[t.status]||'st-pending';
-    const chTxt2=chTxt[t.channel]||t.channel;
-    const exec=t.executed_on?.length?`执行于: ${t.executed_on.join(', ')}`:'';
-    let visit='';
-    if(t.visit_result){
-      const parts=Object.entries(t.visit_result).map(([k,v])=>`${k}: ${v.status}(${v.detail||''})`);
-      visit=parts.join(' · ');
+  const srcMap={'微信':'src-wechat','QQ':'src-qq','Excel':'src-excel','手动':'src-manual'};
+
+  for(const ch of ['main','worker']){
+    const el=document.getElementById('task-list-'+ch);
+    if(!el)continue;
+
+    // 只取本通道的任务（旧数据没有 channel 字段时归到主号）
+    const list=arr.filter(t=>(t.channel||'main')===ch)
+                  .sort((a,b)=>b.task_id.localeCompare(a.task_id));
+
+    // 状态统计（等待 / 执行中 / 完成 / 失败）
+    const cnt={pending:0,running:0,done:0,error:0};
+    list.forEach(t=>{cnt[t.status]=(cnt[t.status]||0)+1});
+    const statEl=document.getElementById('ch-stat-'+ch);
+    if(statEl){
+      const s=statEl._sig;
+      const now=`共 ${list.length} · 等待 ${cnt.pending} · 执行 ${cnt.running} · 完成 ${cnt.done}${cnt.error?` · 失败 ${cnt.error}`:''}`;
+      if(s!==now){statEl._sig=now;statEl.textContent=now;}
     }
-    const err=t.error?` · ${t.error}`:'';
-    return `<div class="task-item">
-      <div class="task-top">
-        <span class="digit-id">${t.digit_id}</span>
-        <span class="task-src ${scls}">${t.source}</span>
-        <span class="task-ch">${chTxt2}</span>
-        <span class="task-st ${stcls}">${stTxt[t.status]||t.status}${err}</span>
-      </div>
-      ${exec?`<div class="task-exec">${exec}</div>`:''}
-      ${visit?`<div class="task-visit">${visit}</div>`:''}
-      <div class="task-time">${t.created_at}${t.finished_at?' → '+t.finished_at:''}</div>
-    </div>`;
-  }).join('');
+
+    // 列表内容没变就不重建（重建会丢滚动位置、每 2 秒闪一次）
+    const sig=list.map(t=>t.task_id+t.status+(t.executed_on||[]).join(',')+(t.visit_result?JSON.stringify(t.visit_result):'')+(t.error||'')).join('|');
+    if(sig===_taskSigs[ch])continue;
+    _taskSigs[ch]=sig;
+
+    if(!list.length){el.innerHTML=`<div class="empty">${CH_META[ch].empty}</div>`;continue}
+
+    el.innerHTML=list.map(t=>{
+      const scls=t.source?.includes('同步')?'src-sync':(srcMap[t.source]||'src-wechat');
+      const stcls=stMap[t.status]||'st-pending';
+      const chTxt2=(t.exec_instance?`指定 ${t.exec_instance}`:(ch==='main'?'主号':'小号'));
+      const exec=t.executed_on?.length?`执行于: ${t.executed_on.join(', ')}`:'';
+      let visit='';
+      if(t.visit_result){
+        const vTxt={claimed:'✓已领取',empty:'空旗(已抢完)',available:'可领取(未领取)',not_found:'UID不存在(跳过)',error:'✗失败'};
+        const parts=Object.entries(t.visit_result).map(([k,v])=>{
+          const detail=v.detail?`(${v.detail})`:'';
+          return `${k}: ${vTxt[v.status]||v.status}${detail}`;
+        });
+        visit=parts.join(' · ');
+      }
+      const err=t.error?` · ${t.error}`:'';
+      return `<div class="task-item">
+        <div class="task-top">
+          <span class="digit-id">${t.digit_id}</span>
+          <span class="task-src ${scls}">${t.source}</span>
+          <span class="task-ch">${chTxt2}</span>
+          <span class="task-st ${stcls}">${stTxt[t.status]||t.status}${err}</span>
+        </div>
+        ${exec?`<div class="task-exec">${exec}</div>`:''}
+        ${visit?`<div class="task-visit">${visit}</div>`:''}
+        <div class="task-time">${t.created_at}${t.finished_at?' → '+t.finished_at:''}</div>
+      </div>`;
+    }).join('');
+  }
 }
 
 function handleLog(text){
@@ -440,6 +574,28 @@ async function toggleExcel(){
   const url=excelRunning?'/api/excel/stop':'/api/excel/start';
   await fetch(url,{method:'POST'});
   excelRunning=!excelRunning;updateButtons();
+}
+
+// 总攻自动参加
+let zonggongRunning=false;
+async function toggleZonggong(){
+  const url=zonggongRunning?'/api/zonggong/stop':'/api/zonggong/start';
+  const r=await fetch(url,{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'});
+  const d=await r.json();
+  if(!d.ok){alert('总攻监控启动失败：'+(d.error||'缺少模板或引擎未初始化'));return;}
+  zonggongRunning=d.running;updateZonggongBtn();
+}
+function updateZonggongBtn(){
+  const btn=document.getElementById('btn-zonggong');
+  if(!btn)return;
+  btn.textContent=zonggongRunning?'停止总攻监控':'启动总攻监控';
+  btn.className=zonggongRunning?'danger':'primary';
+}
+async function refreshZonggong(){
+  try{
+    const d=await(await fetch('/api/zonggong/status')).json();
+    zonggongRunning=!!d.running;updateZonggongBtn();
+  }catch(e){}
 }
 
 // IPC配置连接
@@ -468,6 +624,7 @@ async function connectIPC(name){
 
 // 定时刷新模拟器截图
 async function refreshScreenshots(){
+  if(document.hidden)return;   // 页面切到后台时不拉截图，省带宽也不卡
   const engines=window._visitEngines||[];
   for(const name of engines){
     try{
@@ -475,7 +632,15 @@ async function refreshScreenshots(){
       const d=await r.json();
       if(d.ok){
         const img=document.getElementById('screen-'+name);
-        if(img)img.src='data:image/jpeg;base64,'+d.image;
+        if(img){
+          // 画面没变就不动 src（避免无意义的重新解码/闪烁）
+          if(img.dataset.last===d.image)continue;
+          img.dataset.last=d.image;
+          // 双缓冲：先加载到离屏 Image，加载完再换 src，避免每次换图白屏一闪
+          const tmp=new Image();
+          tmp.onload=()=>{img.src=tmp.src;};
+          tmp.src='data:image/jpeg;base64,'+d.image;
+        }
       }
     }catch(e){}
   }
@@ -500,10 +665,11 @@ async function refreshExcel(){
     renderExcelPanel(d);
   }catch(e){}
 }
+let _xlSig=null;
 function renderExcelPanel(d){
   const info=document.getElementById('excel-info');
   if(d.error){
-    info.innerHTML=`<span style="color:var(--red)">${d.error}</span>`;
+    if(_xlSig!=='err:'+d.error){_xlSig='err:'+d.error;info.innerHTML=`<span style="color:var(--red)">${d.error}</span>`;}
     return;
   }
   let html=`文件: ${d.file_path}<br>`;
@@ -516,13 +682,18 @@ function renderExcelPanel(d){
   document.getElementById('xl-pending').textContent=d.pending;
   document.getElementById('xl-available').textContent=d.uids.filter(u=>u.status==='available').length;
 
+  // UID 表格：内容没变就不重建（重建会丢滚动位置、每 2 秒闪一次）
+  const sig=d.uids.map(u=>u.uid+u.status+(u.is_current?1:0)).join(',');
+  if(sig===_xlSig)return;
+  _xlSig=sig;
+
   const stMap={pending:'待查找',available:'可领取',empty:'已抢完',claimed:'已领过',error:'失败',processed:'已处理'};
   const stColor={pending:'#a77316',available:'#16815e',empty:'#817b91',claimed:'#817b91',error:'#b64457',processed:'#16815e'};
   const rows=document.getElementById('xl-rows');
   rows.innerHTML=d.uids.map(u=>{
     const cur=u.is_current?'<span style="color:var(--purple);font-weight:bold">▶</span> ':'';
     return `<tr style="${u.is_current?'background:#f0ecff':''}">
-      <td style="padding:8px 12px;border-bottom:1px solid #f1eff6;font-size:12px;color:#92879e">${u.row-1}</td>
+      <td style="padding:8px 12px;border-bottom:1px solid #f1eff6;font-size:12px;color:#92879e">${u.index!==undefined?u.index:(u.row-1)}</td>
       <td style="padding:8px 12px;border-bottom:1px solid #f1eff6;font:13px Consolas,monospace;color:#393347">${cur}${u.uid}</td>
       <td style="padding:8px 12px;border-bottom:1px solid #f1eff6;font-size:12px;color:${stColor[u.status]||'#817b91'}">${stMap[u.status]||u.status}</td>
     </tr>`;
@@ -551,6 +722,7 @@ async function uploadExcel(file){
 }
 
 document.addEventListener('DOMContentLoaded',()=>{
+  refreshZonggong();
   const dz=document.getElementById('xl-dropzone');
   if(!dz)return;
   dz.ondragover=e=>{e.preventDefault();dz.style.background='#f0e8ff'};
@@ -575,6 +747,126 @@ async function connectADB(){
   fetchStatus();
 }
 
+// ── 手动巡访（直接输入UID让主号去领取，用于试流程） ──
+let _manualSelSig=null;
+function renderManualTargets(instances){
+  const sel=document.getElementById('manual-inst');
+  if(!sel||!instances)return;
+  const all=Object.entries(instances);
+  const mains=all.filter(([k,v])=>v.role==='main').map(([k])=>k);
+  // 下拉选项没变就不重建（重建会让用户选中的实例/展开状态被重置）
+  const sig=all.map(([k,v])=>k+v.role).join('|');
+  if(sig===_manualSelSig)return;
+  _manualSelSig=sig;
+  const prev=sel.value;
+  sel.innerHTML='<option value="">全部主号'+(mains.length?`（${mains.length}）`:'')+'</option>'
+    +all.map(([k,v])=>`<option value="${k}">${k}${v.role==='main'?'':'(小号)'}</option>`).join('');
+  sel.value=prev;
+  if(!sel.value&&mains.length===0&&all.length===1)sel.value=all[0][0];
+}
+
+async function submitManualVisit(){
+  const input=document.getElementById('manual-uid');
+  const msg=document.getElementById('manual-msg');
+  const btn=document.getElementById('btn-manual');
+  const uid=(input.value||'').replace(/\D/g,'');
+  input.value=uid;
+  if(uid.length!==UID_LEN){
+    msg.style.color='var(--red)';
+    msg.textContent=`UID 必须是 ${UID_LEN} 位数字（当前 ${uid.length} 位）`;
+    return;
+  }
+  const inst=document.getElementById('manual-inst').value;
+  const force=document.getElementById('manual-force').checked;
+  btn.disabled=true;btn.textContent='提交中…';
+  try{
+    const r=await fetch('/api/visit/manual',{
+      method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({uid,instance:inst||null,force}),
+    });
+    const d=await r.json();
+    if(d.ok){
+      msg.style.color='var(--green)';
+      msg.textContent=`已入队 ${uid} → ${inst||'全部主号'}`;
+      addLog(`手动巡访已入队: ${uid} → ${inst||'全部主号'}`);
+      input.value='';
+    }else{
+      msg.style.color='var(--red)';
+      msg.textContent=d.error||'提交失败';
+    }
+  }catch(e){
+    msg.style.color='var(--red)';msg.textContent='请求失败: '+e;
+  }
+  btn.disabled=false;btn.textContent='让主号去领取';
+}
+
+// ── 进家园（进家园+领礼盒，独立于任务队列，领完停在家园） ──
+let _homeRecords=[];
+const _homeCls={'available':'src-wechat','claimed':'src-wechat','empty':'src-excel','not_found':'src-qq','error':'src-manual'};
+function renderHomeRecords(){
+  const el=document.getElementById('home-records');
+  const cnt=document.getElementById('home-count');
+  if(cnt)cnt.textContent=_homeRecords.length;
+  if(!el)return;
+  if(!_homeRecords.length){
+    el.innerHTML='<div class="empty">复制 8 位 UID（或点「只进家园」）就会让主号进对方家园，不领取礼盒</div>';
+    return;
+  }
+  el.innerHTML=_homeRecords.map(r=>{
+    const cls=_homeCls[r.status]||'src-qq';
+    const inst=Object.entries(r.instances||{}).map(([k,v])=>`${k}:${v}`).join(' ');
+    return `<div class="msg-item" style="padding:6px 10px">
+      <span class="src ${cls}" style="font-size:11px">${r.label||r.status}</span>
+      <strong style="margin:0 8px">${r.uid}</strong>
+      <span style="font-size:11px;color:var(--muted)">${inst}</span>
+      <span style="float:right;font-size:11px;color:var(--muted)">${r.time||''}</span>
+    </div>`;
+  }).join('');
+}
+async function fetchHomeRecords(){
+  try{
+    const r=await fetch('/api/home/records');
+    const d=await r.json();
+    if(d.ok){_homeRecords=d.records||[];renderHomeRecords();}
+  }catch(e){}
+}
+async function clearHomeRecords(){
+  try{
+    const r=await fetch('/api/home/clear',{method:'POST'});
+    const d=await r.json();
+    if(d.ok){_homeRecords=[];renderHomeRecords();
+      const msg=document.getElementById('manual-msg');
+      if(msg){msg.style.color='var(--green)';msg.textContent=`已清空 ${d.cleared||0} 条进家园记录，同一个 UID 可重新进`;}
+      addLog(`进家园记录已清空（${d.cleared||0} 条）`);}
+  }catch(e){addLog('清空进家园记录失败: '+e);}
+}
+async function submitHomeVisit(){
+  const input=document.getElementById('manual-uid');
+  const msg=document.getElementById('manual-msg');
+  const btn=document.getElementById('btn-home');
+  const uid=(input.value||'').replace(/\D/g,'');
+  const inst=document.getElementById('manual-inst').value||null;
+  if(uid.length!==8){if(msg){msg.style.color='var(--red)';msg.textContent='请输入 8 位数字 UID';}return;}
+  btn.disabled=true;btn.textContent='执行中…';
+  try{
+    const r=await fetch('/api/home/visit',{method:'POST',
+      headers:{'Content-Type':'application/json'},body:JSON.stringify({uid:uid,instance:inst})});
+    const d=await r.json();
+    if(d.ok){if(msg){msg.style.color='var(--green)';msg.textContent=`UID ${uid} 进家园已受理（${inst||'全部主号'}）`;}
+      addLog(`进家园请求已受理: ${uid} → ${inst||'全部主号'}`);}
+    else{const t={skipped:'该 UID 已进过家园（清空记录可重进）',error:'受理失败，看日志'}[d.result]||d.result;
+      if(msg){msg.style.color='var(--red)';msg.textContent=t;}}
+  }catch(e){if(msg){msg.style.color='var(--red)';msg.textContent='请求失败: '+e;}}
+  btn.disabled=false;btn.textContent='只进家园';
+}
+function handleHomeRecord(rec){
+  if(!rec||!rec.uid)return;
+  if(_homeRecords.some(x=>x.uid===rec.uid&&x.time===rec.time))return;
+  _homeRecords.unshift(rec);
+  if(_homeRecords.length>200)_homeRecords.length=200;
+  renderHomeRecords();
+}
+
 async function setSpeed(val){
   await fetch('/api/speed',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({delay:Number(val)})});
 }
@@ -593,8 +885,8 @@ async function autoDetect(){
     const r=await fetch('/api/detect',{method:'POST'});
     const d=await r.json();
     renderDetectReport(d);
-    updatePill('wechat',d.wechat?.found);
-    updatePill('qq',d.qq?.found);
+    updatePill('wechat',d.wechat?.usable?'ok':(d.wechat?.found?'blocked':'off'));
+    updatePill('qq',d.qq?.usable?'ok':(d.qq?.found?'blocked':'off'));
     updatePill('adb',d.instances&&Object.values(d.instances).some(i=>i.adb));
     fetchStatus();
   }catch(e){console.error(e)}
@@ -617,13 +909,10 @@ function renderDetectReport(d){
     html+='<div style="background:#f5e8ea;color:#b64457;padding:8px 12px;border-radius:8px;margin-bottom:10px;font-weight:600">✗ 尚未就绪，请按提示检查</div>';
   }
 
-  // 微信
-  const wok=d.wechat?.found;
-  html+=`<div style="margin-bottom:6px"><span class="dot ${wok?'dot-on':'dot-off'}"></span><b>微信：</b>${d.wechat?.detail||'未检测'}</div>`;
-
-  // QQ
-  const qok=d.qq?.found;
-  html+=`<div style="margin-bottom:10px"><span class="dot ${qok?'dot-on':'dot-off'}"></span><b>QQ：</b>${d.qq?.detail||'未检测'}</div>`;
+  // 微信 / QQ：三态显示（可用 / 窗口在但读不到 / 未检测）
+  const tri=s=>s?.usable?'dot-on':(s?.found?'dot-warn':'dot-off');
+  html+=`<div style="margin-bottom:6px"><span class="dot ${tri(d.wechat)}"></span><b>微信：</b>${d.wechat?.detail||'未检测'}</div>`;
+  html+=`<div style="margin-bottom:10px"><span class="dot ${tri(d.qq)}"></span><b>QQ：</b>${d.qq?.detail||'未检测'}</div>`;
 
   // 每个实例
   if(d.instances){
@@ -657,14 +946,18 @@ async function fetchStatus(){
     updatePill('qq',d.qq?.connected);
     updatePill('adb',d.instances&&Object.values(d.instances).some(i=>i.connected));
     window._visitEngines=d.visit_engines||[];
+    if(d.uid_length)UID_LEN=d.uid_length;
     if(d.instances)renderInstances(d.instances);
+    if(d.instances)renderManualTargets(d.instances);
     if(d.visit_engines?.length)renderEngines(d.visit_engines);
     updateStats(d.stats);
     monitoring=d.monitor_running;excelRunning=d.excel_running;updateButtons();
+    if(d.home){_homeRecords=d.home.records||[];renderHomeRecords();}
   }catch(e){}
 }
 
 connectWS();
+fetchHomeRecords();
 setInterval(fetchStatus,3000);
 setInterval(refreshExcel,2000);
 setInterval(refreshScreenshots,1500);
