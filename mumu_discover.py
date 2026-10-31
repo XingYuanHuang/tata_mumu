@@ -8,6 +8,9 @@ import json
 import subprocess
 from pathlib import Path
 
+# MuMu 12 的 adb 在三处之一，取决于版本/安装方式（换机器最容易在这踩坑）
+ADB_RELS = ("shell/adb.exe", "nx_main/adb.exe", "nx_device/12.0/shell/adb.exe")
+
 
 def find_mumu_root():
     """自动查找MuMu 12安装目录"""
@@ -19,34 +22,43 @@ def find_mumu_root():
             candidates.append(Path(base) / "Netease" / "MuMuPlayer-12.0")
             candidates.append(Path(base) / "Netease" / "MuMuPlayerGlobal-12.0")
     
-    # 常见安装路径
-    for drive in ["C", "D", "E"]:
-        candidates.append(Path(f"{drive}:\\Program Files\\Netease\\MuMuPlayer-12.0"))
-        candidates.append(Path(f"{drive}:\\Program Files (x86)\\Netease\\MuMuPlayer-12.0"))
+    # 常见安装路径（遍历所有存在的盘符，换机器不用改代码）
+    for drive in "CDEFGH":
+        if not Path(f"{drive}:\\").exists():
+            continue
+        for sub in ("Program Files", "Program Files (x86)"):
+            candidates.append(Path(f"{drive}:\\{sub}\\Netease\\MuMuPlayer-12.0"))
+            candidates.append(Path(f"{drive}:\\{sub}\\Netease\\MuMuPlayerGlobal-12.0"))
     
     for p in candidates:
-        if p.is_dir() and (p / "shell" / "adb.exe").exists():
+        if not p.is_dir():
+            continue
+        if any((p / rel).is_file() for rel in ADB_RELS):
             return p
-    
-    # 尝试用MuMuManager.exe找
+
+    # 再退一步：vms 目录 + nx_main 都在，也算有效安装（adb 位置以后可能再变）
     for p in candidates:
-        mgr = p / "nx_main" / "MuMuManager.exe"
-        if mgr.exists():
+        if p.is_dir() and (p / "vms").is_dir() and (p / "nx_main").is_dir():
             return p
-    
+
     return None
 
 
 def find_mumu_adb():
-    """查找MuMu自带的adb.exe"""
+    """查找MuMu自带的adb.exe（兼容 shell/ 与 nx_main/ 两种布局）"""
     root = find_mumu_root()
     if root:
-        adb = root / "shell" / "adb.exe"
-        if adb.exists():
-            return str(adb)
-    # 退回系统adb
-    import shutil
-    return shutil.which("adb") or "adb"
+        for rel in ADB_RELS:
+            adb = root / rel
+            if adb.is_file():
+                return str(adb)
+    # 退回统一入口（还包含环境变量/系统 PATH 兜底）
+    try:
+        from adb_controller import find_mumu_adb as _resolve
+        return _resolve(None)
+    except Exception:
+        import shutil
+        return shutil.which("adb") or "adb"
 
 
 def discover_instances():

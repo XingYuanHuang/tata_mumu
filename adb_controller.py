@@ -25,9 +25,14 @@ class ADBInstance:
         self._connected = False
 
     def _run(self, *args, timeout=10):
-        cmd = [self.adb_path, "-s", self.device_serial] + list(args)
-        if not self._connected:
+        # connect/disconnect 是 adb 客户端命令，不针对具体设备，不能带 -s；
+        # 其余命令（get-state/shell/...）必须带 -s——多设备时省略会报
+        # "error: more than one device/emulator"，导致连接确认永远失败
+        no_target = args and args[0] in ("connect", "disconnect")
+        if no_target:
             cmd = [self.adb_path] + list(args)
+        else:
+            cmd = [self.adb_path, "-s", self.device_serial] + list(args)
         try:
             result = subprocess.run(
                 cmd, capture_output=True, text=True, timeout=timeout,
@@ -40,10 +45,18 @@ class ADBInstance:
             return "", str(e), -1
 
     def connect(self):
+        # 设备卡在 offline 状态时，直接 connect 仍会显示 offline，先断开重连
+        out, _, _ = self._run("get-state")
+        if "offline" in out:
+            self._run("disconnect", self.device_serial)
+            time.sleep(0.4)
         out, err, _ = self._run("connect", self.device_serial)
         if "connected" in out or "already connected" in out:
-            self._connected = True
-            return True
+            # connect 成功不代表状态正常，再确认一次
+            out2, _, _ = self._run("get-state")
+            if "device" in out2:
+                self._connected = True
+                return True
         return False
 
     def is_connected(self):
@@ -102,24 +115,50 @@ class ADBInstance:
 
 
 def find_mumu_adb(adb_path=None):
-    """查找 MuMu 自带 adb"""
-    if adb_path:
+    """查找 adb.exe：显式配置 > MuMu 各版本目录结构 > 系统 PATH
+
+    MuMu 12 有两种安装布局，adb 放的位置不一样，换机器很容易踩到：
+      老版：<root>\\shell\\adb.exe
+      新版：<root>\\nx_main\\adb.exe          ← 当前这台机器就是这种
+      部分版本：<root>\\nx_device\\12.0\\shell\\adb.exe
+    配置里写了路径但文件不存在时不再盲信（以前会返回一个不存在的路径，
+    直到输入 UID 才报 WinError 2），而是继续自动探测。
+    """
+    if adb_path and os.path.isfile(adb_path):
         return adb_path
-    possible = [
-        os.path.join(os.environ.get("ProgramFiles", "C:\\Program Files"),
-                     "Netease", "MuMuPlayer-12.0", "shell", "adb.exe"),
-        os.path.join(os.environ.get("ProgramFiles(x86)", "C:\\Program Files (x86)"),
-                     "Netease", "MuMuPlayer-12.0", "shell", "adb.exe"),
-        os.path.join(os.environ.get("LOCALAPPDATA", ""),
-                     "Programs", "Netease", "MuMuPlayer-12.0", "shell", "adb.exe"),
-        "D:\\Program Files\\Netease\\MuMuPlayer-12.0\\shell\\adb.exe",
-        "E:\\Program Files\\Netease\\MuMuPlayer-12.0\\shell\\adb.exe",
+
+    rels = ("shell/adb.exe", "nx_main/adb.exe", "nx_device/12.0/shell/adb.exe")
+
+    # 1) 复用实例发现里的 root 探测（支持任意盘符 + MuMuManager 兜底）
+    try:
+        from mumu_discover import find_mumu_root
+        root = find_mumu_root()
+    except Exception:
+        root = None
+    if root:
+        for rel in rels:
+            p = os.path.join(str(root), rel.replace("/", os.sep))
+            if os.path.isfile(p):
+                return p
+
+    # 2) 常规安装位置兜底
+    bases = [
+        os.environ.get("ProgramFiles"),
+        os.environ.get("ProgramFiles(x86)"),
+        os.path.join(os.environ.get("LOCALAPPDATA", ""), "Programs"),
     ]
-    for path in possible:
-        if os.path.isfile(path):
-            return path
-    system_adb = shutil.which("adb")
-    return system_adb or "adb"
+    for base in bases:
+        if not base:
+            continue
+        for name in ("MuMuPlayer-12.0", "MuMuPlayerGlobal-12.0"):
+            for rel in rels:
+                p = os.path.join(base, "Netease", name, rel.replace("/", os.sep))
+                if os.path.isfile(p):
+                    return p
+
+    # 3) 系统 PATH 里装的 adb
+    return shutil.which("adb") or "adb"
+
 
 
 class ADBManager:
