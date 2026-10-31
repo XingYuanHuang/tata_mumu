@@ -115,15 +115,50 @@ class ADBInstance:
 
 
 def find_mumu_adb(adb_path=None):
-    """查找 MuMu 自带 adb（统一委托 mumu_discover，避免两份候选路径漂移）"""
-    if adb_path:
+    """查找 adb.exe：显式配置 > MuMu 各版本目录结构 > 系统 PATH
+
+    MuMu 12 有两种安装布局，adb 放的位置不一样，换机器很容易踩到：
+      老版：<root>\\shell\\adb.exe
+      新版：<root>\\nx_main\\adb.exe          ← 当前这台机器就是这种
+      部分版本：<root>\\nx_device\\12.0\\shell\\adb.exe
+    配置里写了路径但文件不存在时不再盲信（以前会返回一个不存在的路径，
+    直到输入 UID 才报 WinError 2），而是继续自动探测。
+    """
+    if adb_path and os.path.isfile(adb_path):
         return adb_path
+
+    rels = ("shell/adb.exe", "nx_main/adb.exe", "nx_device/12.0/shell/adb.exe")
+
+    # 1) 复用实例发现里的 root 探测（支持任意盘符 + MuMuManager 兜底）
     try:
-        from mumu_discover import find_mumu_adb as _discover_adb
-        return _discover_adb()
+        from mumu_discover import find_mumu_root
+        root = find_mumu_root()
     except Exception:
-        import shutil
-        return shutil.which("adb") or "adb"
+        root = None
+    if root:
+        for rel in rels:
+            p = os.path.join(str(root), rel.replace("/", os.sep))
+            if os.path.isfile(p):
+                return p
+
+    # 2) 常规安装位置兜底
+    bases = [
+        os.environ.get("ProgramFiles"),
+        os.environ.get("ProgramFiles(x86)"),
+        os.path.join(os.environ.get("LOCALAPPDATA", ""), "Programs"),
+    ]
+    for base in bases:
+        if not base:
+            continue
+        for name in ("MuMuPlayer-12.0", "MuMuPlayerGlobal-12.0"):
+            for rel in rels:
+                p = os.path.join(base, "Netease", name, rel.replace("/", os.sep))
+                if os.path.isfile(p):
+                    return p
+
+    # 3) 系统 PATH 里装的 adb
+    return shutil.which("adb") or "adb"
+
 
 
 class ADBManager:

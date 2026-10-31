@@ -43,6 +43,10 @@ ADB_INSTANCES = {
 }
 
 ADB_PATH = None
+# 留 None = 自动探测 MuMu 自带的 adb（兼容 shell\ / nx_main\ / nx_device\ 三种布局，
+# 并遍历所有盘符找安装目录），换机器不用改这里。
+# 自动探测失败时才手动指定，例如：
+# ADB_PATH = r"C:\Program Files\Netease\MuMuPlayer-12.0\shell\adb.exe"
 
 # ── 小号 Excel UID 配置 ──
 EXCEL_CONFIG = {

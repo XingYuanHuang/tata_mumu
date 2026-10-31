@@ -103,18 +103,6 @@ main{max-width:1400px;margin:0 auto;padding:0 30px 30px}
 .preview{background:var(--dark);border-radius:10px;overflow:hidden;min-height:160px;display:flex;align-items:center;justify-content:center}
 .preview-empty{color:#aaa3c1;line-height:1.8;font-size:13px;text-align:center}
 footer{font-size:11px;color:#a59aaf;text-align:center;padding:4px 10px 24px}
-.fish-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:14px}
-@media(max-width:1100px){.fish-grid{grid-template-columns:1fr}}
-.fish-card{border:1px solid var(--border);border-radius:12px;padding:14px;display:flex;flex-direction:column;gap:9px}
-.fish-card .fish-head{display:flex;align-items:center;justify-content:space-between}
-.fish-card .fish-name{font-size:14px;font-weight:bold}
-.fish-stats{display:grid;grid-template-columns:repeat(4,1fr);gap:6px}
-.fish-stats .fs{border:1px solid var(--border);border-radius:8px;padding:6px 8px;text-align:center}
-.fish-stats .fs span{display:block;font-size:10px;color:var(--muted)}
-.fish-stats .fs strong{font-size:15px;font-weight:650}
-.fish-records{max-height:190px;overflow:auto;border:1px solid var(--border);border-radius:9px;background:#fbfaff;padding:6px}
-.fish-rec-item{display:flex;gap:8px;align-items:center;padding:5px 6px;border-bottom:1px dashed #eee9f6;font-size:12px}
-.fish-rec-item img{width:52px;border-radius:5px;border:1px solid var(--border)}
 @media(max-width:970px){.grid{grid-template-columns:1fr}.stats{grid-template-columns:repeat(3,1fr)}.inst-grid{grid-template-columns:1fr}}
 </style>
 </head>
@@ -242,9 +230,9 @@ footer{font-size:11px;color:#a59aaf;text-align:center;padding:4px 10px 24px}
     <aside class="right">
       <!-- 模拟器画面（多实例，带IPC配置） -->
       <div class="card">
-        <h2>模拟器画面（多实例） <label style="font-size:12px;font-weight:normal;display:inline-flex;align-items:center;gap:4px;cursor:pointer"><input type="checkbox" id="screen-toggle"> 显示画面（默认关闭省内存）</label></h2>
+        <h2>模拟器画面（多实例）</h2>
         <div id="previews" style="display:flex;flex-direction:column;gap:12px">
-          <div class="preview-empty">画面默认关闭（省内存），勾选上方"显示画面"开启</div>
+          <div class="preview-empty">连接后各实例画面独立显示</div>
         </div>
       </div>
 
@@ -262,25 +250,6 @@ footer{font-size:11px;color:#a59aaf;text-align:center;padding:4px 10px 24px}
         <div id="engine-status" class="hint">未初始化（需要Windows + MuMu IPC配置）</div>
       </div>
     </aside>
-  </div>
-
-  <!-- 钓鱼大赛模块（多实例） -->
-  <div class="card" style="margin-top:20px">
-    <h2><span class="step">🐟</span>钓鱼大赛 · 多实例控制</h2>
-    <div class="row" style="margin-bottom:13px">
-      <label style="font-size:13px;display:flex;align-items:center;gap:6px">竿数上限
-        <input type="number" id="fish-limit" value="30" min="1" max="99999" style="width:72px">
-      </label>
-      <label style="font-size:13px;display:flex;align-items:center;gap:6px">QTE失误间隔
-        <input type="number" id="fish-miss-min" value="20" min="1" style="width:62px"> ~
-        <input type="number" id="fish-miss-max" value="30" min="1" style="width:62px"> 次
-      </label>
-      <span class="hint" style="margin:0;flex:1;min-width:200px">每 N 次 QTE 点击故意失误 1 次（拟真人节奏，默认 20~30）；各实例独立运行，需先把对应实例切到钓鱼大赛页面</span>
-      <button class="danger" onclick="fishStopAll()">全部停止</button>
-    </div>
-    <div class="fish-grid" id="fish-grid">
-      <div class="empty" style="grid-column:1/-1">加载中…</div>
-    </div>
   </div>
 </main>
 <footer>本地工具 · 群消息监控UID · MuMu多实例巡访 · 不读取游戏密码 · 关闭网页不会停止任务</footer>
@@ -343,7 +312,6 @@ function connectWS(){
       case 'task_status':handleTask(m.data);break;
       case 'log':handleLog(m.data);break;
       case 'home_record':handleHomeRecord(m.data);break;
-      case 'fishing_record':handleFishingRecord(m.data);break;
     }
   };
 }
@@ -360,8 +328,6 @@ function handleInit(d){
   if(d.visit_engines?.length)renderEngines(d.visit_engines);
   updateStats(d.stats);
   if(d.home){_homeRecords=d.home.records||[];renderHomeRecords();}
-  _fishWorkers=d.fishing||{};_fishAvailable=d.fishing_available||[];
-  renderFishing();
 }
 
 function handleConn(m){
@@ -656,10 +622,8 @@ async function connectIPC(name){
   fetchStatus();
 }
 
-// 定时刷新模拟器截图（默认关闭：截图拉取+JPEG解码很吃内存，勾选后才开启）
+// 定时刷新模拟器截图
 async function refreshScreenshots(){
-  const on=document.getElementById('screen-toggle');
-  if(!on || !on.checked)return;   // 未勾选时完全不请求截图
   if(document.hidden)return;   // 页面切到后台时不拉截图，省带宽也不卡
   const engines=window._visitEngines||[];
   for(const name of engines){
@@ -907,176 +871,6 @@ async function setSpeed(val){
   await fetch('/api/speed',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({delay:Number(val)})});
 }
 
-// ── 钓鱼大赛：多实例控制 + 刷新纪录框 ──
-let _fishWorkers={}, _fishAvailable=[], _fishRecords={}, _fishSig=null;
-const FISH_LABEL={'instance_1':'实例1','instance_2':'实例2','instance_3':'实例3'};
-
-function fishNames(){
-  const s=new Set([...(_fishAvailable||[]),...Object.keys(_fishWorkers)]);
-  return [...s].sort();
-}
-
-function renderFishing(){
-  const names=fishNames();
-  const grid=document.getElementById('fish-grid');
-  if(!grid)return;
-  if(!names.length){
-    if(_fishSig!=='empty'){_fishSig='empty';
-      grid.innerHTML='<div class="empty" style="grid-column:1/-1">未发现模拟器实例，请先点「自动检测环境」生成 IPC 配置</div>';}
-    return;
-  }
-  const sig=names.join('|');
-  if(sig!==_fishSig){
-    _fishSig=sig;
-    grid.innerHTML=names.map(n=>`
-      <div class="fish-card" id="fish-${n}">
-        <div class="fish-head">
-          <span class="fish-name">🐟 ${FISH_LABEL[n]||n}</span>
-          <span class="pill off" id="fish-pill-${n}">未运行</span>
-        </div>
-        <div style="font-size:12px;color:var(--muted);min-height:18px" id="fish-state-${n}">待启动</div>
-        <div class="fish-stats">
-          <div class="fs"><span>抛竿</span><strong id="fish-casts-${n}">0</strong></div>
-          <div class="fs"><span>QTE</span><strong id="fish-qte-${n}">0</strong></div>
-          <div class="fs"><span>收鱼</span><strong id="fish-col-${n}">0</strong></div>
-          <div class="fs"><span>竿/分</span><strong id="fish-cpm-${n}">0</strong></div>
-        </div>
-        <div class="row" style="margin:0;align-items:center">
-          <label style="display:flex;align-items:center;gap:5px;font-size:12px;cursor:pointer;user-select:none">
-            <input type="checkbox" id="fish-bait-${n}" onchange="fishBaitToggle('${n}',this.checked)"> 🪱 撒鱼饵
-          </label>
-          <span style="margin-left:auto;font-size:12px;color:var(--muted)" id="fish-level-${n}">等级 - · 鱼饵 -</span>
-        </div>
-        <div class="row">
-          <button class="primary" style="flex:1" id="fish-btn-start-${n}" onclick="fishStart('${n}')">开始</button>
-          <button style="flex:1" id="fish-btn-pause-${n}" onclick="fishPauseToggle('${n}')" disabled>暂停</button>
-          <button class="danger" style="flex:1" id="fish-btn-stop-${n}" onclick="fishStop('${n}')" disabled>停止</button>
-        </div>
-        <div class="row" style="margin:0">
-          <span style="font-size:12px;color:var(--muted)">🏆 刷新纪录（<span id="fish-rec-cnt-${n}">0</span>）</span>
-          <button class="quiet" style="margin-left:auto;font-size:11px;padding:2px 8px" onclick="fishClearRecords('${n}')">清空</button>
-        </div>
-        <div class="fish-records" id="fish-records-${n}">
-          <div class="empty" style="padding:10px 0">钓到刷新纪录的鱼会记录在这里</div>
-        </div>
-      </div>`).join('');
-    // 结构重建后把已有纪录渲染回去
-    names.forEach(n=>renderFishRecords(n));
-  }
-  // 动态状态原地更新
-  for(const n of names){
-    const w=_fishWorkers[n]||{};
-    const running=!!w.running, paused=!!w.paused;
-    const pill=document.getElementById('fish-pill-'+n);
-    if(pill){
-      const cls=paused?'pill warn':running?'pill on':'pill off';
-      const txt=paused?'已暂停':running?'运行中':'未运行';
-      if(pill.textContent!==txt||pill.className!==cls){pill.className=cls;pill.textContent=txt;}
-    }
-    const st=document.getElementById('fish-state-'+n);
-    if(st){const t=w.state||(running?'…':'待启动');if(st.textContent!==t)st.textContent=t;}
-    const setNum=(id,v)=>{const el=document.getElementById(id);if(el&&el.textContent!==String(v))el.textContent=v;};
-    setNum('fish-casts-'+n,w.casts??0);
-    setNum('fish-qte-'+n,w.qte??0);
-    setNum('fish-col-'+n,w.collected??0);
-    setNum('fish-cpm-'+n,w.casts_per_minute??0);
-    const cb=document.getElementById('fish-bait-'+n);
-    if(cb&&document.activeElement!==cb&&cb.checked!==!!w.bait)cb.checked=!!w.bait;
-    const lv=document.getElementById('fish-level-'+n);
-    if(lv){const t=`等级 ${w.level??'-'} · 鱼饵 ${w.bait_count??'-'}`;if(lv.textContent!==t)lv.textContent=t;}
-    const bs=document.getElementById('fish-btn-start-'+n);
-    if(bs){bs.disabled=running;bs.textContent=running?'运行中…':'开始';bs.className=running?'':'primary';}
-    const bp=document.getElementById('fish-btn-pause-'+n);
-    if(bp){bp.disabled=!running;bp.textContent=paused?'继续':'暂停';}
-    const bx=document.getElementById('fish-btn-stop-'+n);
-    if(bx)bx.disabled=!running;
-    const sr=w.stop_reason;
-    if(sr&&st){const t=w.state?`${w.state}（上次结束: ${sr}）`:`已结束: ${sr}`;if(!running&&st.textContent!==t)st.textContent=t;}
-  }
-}
-
-function renderFishRecords(n){
-  const el=document.getElementById('fish-records-'+n);
-  const cnt=document.getElementById('fish-rec-cnt-'+n);
-  const list=_fishRecords[n]||[];
-  if(cnt)cnt.textContent=list.length;
-  if(!el)return;
-  if(!list.length){el.innerHTML='<div class="empty" style="padding:10px 0">钓到刷新纪录的鱼会记录在这里</div>';return;}
-  el.innerHTML=list.map(r=>`
-    <div class="fish-rec-item">
-      ${r.image?`<img src="data:image/jpeg;base64,${r.image}" alt="纪录卡">`:''}
-      <div style="flex:1;min-width:0">
-        <div style="font-weight:600;color:#6246b3">🏆 ${r.kind==='RECORD'?'刷新纪录卡':'结算卡'}</div>
-        <div style="font-size:11px;color:var(--muted)">${r.time||''}</div>
-      </div>
-    </div>`).join('');
-}
-
-function handleFishingRecord(rec){
-  if(!rec||!rec.instance)return;
-  const n=rec.instance;
-  const list=_fishRecords[n]=_fishRecords[n]||[];
-  if(list.some(x=>x.time===rec.time&&x.kind===rec.kind))return;
-  list.unshift(rec);
-  if(list.length>30)list.length=30;
-  renderFishRecords(n);
-  renderFishing();
-}
-
-async function fishStart(n){
-  const limit=Number(document.getElementById('fish-limit')?.value||30);
-  const missMin=Number(document.getElementById('fish-miss-min')?.value||20);
-  const missMax=Number(document.getElementById('fish-miss-max')?.value||30);
-  const btn=document.getElementById('fish-btn-start-'+n);
-  if(btn){btn.disabled=true;btn.textContent='启动中…';}
-  const bait=document.getElementById('fish-bait-'+n)?.checked||false;
-  try{
-    const r=await fetch('/api/fishing/start',{method:'POST',headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({instance:n,limit,miss_min:missMin,miss_max:Math.max(missMin,missMax),bait})});
-    const d=await r.json();
-    if(!d.ok)addLog(`[钓鱼] ${n} 启动失败: ${d.error||'未知错误'}`);
-  }catch(e){addLog('[钓鱼] 启动请求失败: '+e);}
-  fetchStatus();
-}
-async function fishPauseToggle(n){
-  const w=_fishWorkers[n]||{};
-  const url=w.paused?'/api/fishing/resume':'/api/fishing/pause';
-  try{await fetch(url,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({instance:n})});}
-  catch(e){addLog('[钓鱼] 暂停/继续请求失败: '+e);}
-  fetchStatus();
-}
-async function fishBaitToggle(n,on){
-  try{await fetch('/api/fishing/bait',{method:'POST',headers:{'Content-Type':'application/json'},
-    body:JSON.stringify({instance:n,on})});}
-  catch(e){addLog('[钓鱼] 撒鱼饵开关请求失败: '+e);}
-  fetchStatus();
-}
-async function fishStop(n){
-  try{await fetch('/api/fishing/stop',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({instance:n})});}
-  catch(e){addLog('[钓鱼] 停止请求失败: '+e);}
-  fetchStatus();
-}
-async function fishStopAll(){
-  try{await fetch('/api/fishing/stop',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'});}
-  catch(e){}
-  fetchStatus();
-}
-async function fishClearRecords(n){
-  try{
-    const r=await fetch('/api/fishing/records/clear',{method:'POST',headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({instance:n})});
-    const d=await r.json();
-    if(d.ok){_fishRecords[n]=[];renderFishRecords(n);addLog(`[钓鱼] ${n} 纪录已清空（${d.cleared} 条）`);}
-  }catch(e){addLog('[钓鱼] 清空纪录失败: '+e);}
-}
-async function fetchFishingRecords(){
-  try{
-    const r=await fetch('/api/fishing/records');
-    const d=await r.json();
-    if(d.ok){_fishRecords=d.records||{};fishNames().forEach(n=>renderFishRecords(n));}
-  }catch(e){}
-}
-
 async function autoDetect(){
   const btn=document.getElementById('btn-detect');
   btn.textContent='检测中…';btn.disabled=true;
@@ -1159,14 +953,11 @@ async function fetchStatus(){
     updateStats(d.stats);
     monitoring=d.monitor_running;excelRunning=d.excel_running;updateButtons();
     if(d.home){_homeRecords=d.home.records||[];renderHomeRecords();}
-    _fishWorkers=d.fishing||{};_fishAvailable=d.fishing_available||[];
-    renderFishing();
   }catch(e){}
 }
 
 connectWS();
 fetchHomeRecords();
-fetchFishingRecords();
 setInterval(fetchStatus,3000);
 setInterval(refreshExcel,2000);
 setInterval(refreshScreenshots,1500);

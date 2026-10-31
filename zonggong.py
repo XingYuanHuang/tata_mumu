@@ -26,8 +26,6 @@ import cv2
 import numpy as np
 from pathlib import Path
 
-from engine_gate import lock_for
-
 ASSETS = Path(__file__).parent / "visit_assets"
 
 # 多尺度匹配：模板来自窗口截图(约816px游戏宽)，实际模拟器 1080~1092px
@@ -197,16 +195,6 @@ class ZongGongMonitor:
             time.sleep(self.poll_interval)
 
     def _check_one(self, name, engine):
-        """和巡访/进家园共用每实例互斥锁：拿不到锁说明有任务在操作模拟器，本轮跳过。"""
-        lock = lock_for(name)
-        if not lock.acquire(blocking=False):
-            return
-        try:
-            self._check_one_locked(name, engine)
-        finally:
-            lock.release()
-
-    def _check_one_locked(self, name, engine):
         now = time.time()
         frame = engine.screenshot()
         h, w = frame.shape[:2]
@@ -224,15 +212,12 @@ class ZongGongMonitor:
         score, bx, by, bw, bh = _match(
             frame, self.tpl_chat, region=(rx1, ry1, w, int(h * 0.88)))
         if score < 0.62:
-            # 不在活动地图（被卡片带去家园/弹窗挡住/退到主页等）→ 主动返回
+            # 不在活动地图（被退到游戏主页/其他界面）→ 自愈
             self._miss[name] = self._miss.get(name, 0) + 1
-            if self._miss[name] >= 3:   # 连续 ~9 秒不在地图才动手，防单帧误判
+            if self._miss[name] >= 20:   # 连续~60秒不在地图
                 self._miss[name] = 0
-                self.on_log(f"[总攻][{name}] 不在活动地图，尝试返回夺金地图")
-                if self._back_to_map(engine, name):
-                    self.on_log(f"[总攻][{name}] 已回到夺金地图")
-                else:
-                    self.on_log(f"[总攻][{name}] 未能回到夺金地图，下轮继续尝试")
+                self.on_log(f"[总攻][{name}] 连续60秒不在活动地图，尝试自愈返回")
+                self._heal_to_map(engine, name, w, h)
             return
         self._miss[name] = 0
 
@@ -273,27 +258,18 @@ class ZongGongMonitor:
             h, w = frame.shape[:2]
             if self._on_zonggong_page(frame):
                 break
-            self.on_log(f"[总攻][{name}] {tag}未进入总攻页")
-            # 点击后被带去别的页面（玩家家园/资料页等）→ 存现场截图并直接返回地图
-            if not _match_all(frame, self.tpl_card,
-                              region=(int(w * 0.15), 0, w, int(h * 0.95)), thresh=0.65):
-                self.on_log(f"[总攻][{name}] 点击卡片后被带离聊天页，返回夺金地图")
-                engine._save_debug_cap("zg_cardfail", frame)
-                self._back_to_map(engine, name)
-                self._cooldown[name] = time.time()
-                return
-            # 还在聊天页 → 关掉残留弹层继续试下一张
+            self.on_log(f"[总攻][{name}] {tag}未进入总攻页，尝试下一张")
+            # 可能还在聊天页，回到聊天继续点下一张
             self._close_chat(engine, w, h)
             time.sleep(0.8)
             frame = engine.screenshot()
             h, w = frame.shape[:2]
             if not _match_all(frame, self.tpl_card, thresh=0.65):
                 self.on_log(f"[总攻][{name}] 已离开聊天页，结束本轮")
-                self._back_to_map(engine, name)
                 return
         else:
-            self.on_log(f"[总攻][{name}] 所有卡片都未进入总攻页，返回地图")
-            self._back_to_map(engine, name)
+            self.on_log(f"[总攻][{name}] 所有卡片都未进入总攻页，关闭聊天")
+            self._close_chat(engine, w, h)
             self._cooldown[name] = now
             return
 
@@ -372,66 +348,35 @@ class ZongGongMonitor:
                                 region=(0, int(h * 0.85), int(w * 0.25), h))
         return bs >= 0.65
 
-    def _back_to_map(self, engine, name, max_steps=8):
-        """从任意界面（家园/总攻页/聊天页/游戏主页/弹窗）回到海岛夺金活动地图。
+    def _heal_to_map(self, engine, name, w, h):
+        """自愈：不在活动地图时尝试返回。
 
-        每一步都重新截图判断，按优先级处理：
-          1. 右下角聊天入口命中 → 已在地图，收工
-          2. 总攻页左下角返回按钮 → 点返回
-          3. 家园/弹窗的 ✕（引擎 close 模板全屏找）→ 点掉
-          4. 「确定」按钮 → 点掉
-          5. 都没有 → 视为游戏主页，点底部中央「夺金」入口
-             （2026-10-19 实测：游戏主页点 (0.5w,0.94h) 直达夺金地图）
-        每步都先确认"不在地图"才动手，避免把地图自己的「退出活动X」点到。
+        优先方案：visit_assets/zg_home_entry.png（游戏主页上「夺金」入口按钮模板，
+        有的话模板匹配点击，最可靠）。
+        兜底方案：地图底部中央的X和主页入口常在同一位置，点(0.5w, 0.965h)尝试切换。
+        点完等2秒重新截图确认，没成功下一轮再试。
         """
-        for step in range(max_steps):
-            frame = engine.screenshot()
-            fh, fw = frame.shape[:2]
-            rs, _, _, _, _ = _match(frame, self.tpl_chat,
-                                    region=(int(fw * 0.76), int(fh * 0.68),
-                                            fw, int(fh * 0.88)))
-            if rs >= 0.62:
-                return True
-            # 「总攻完成!」结算弹窗挡在最上层 → 先点确定关掉（✕ 会被弹窗挡住点不到）
-            if self.tpl_done is not None:
-                ds, _, _, _, _ = _match(frame, self.tpl_done,
-                                        region=(int(fw * 0.1), 0, int(fw * 0.9), int(fh * 0.4)))
-                if ds >= 0.68:
-                    oscore, ox, oy, ow, oh = (-1, 0, 0, 0, 0)
-                    if self.tpl_ok is not None:
-                        oscore, ox, oy, ow, oh = _match(
-                            frame, self.tpl_ok,
-                            region=(int(fw * 0.15), int(fh * 0.75), int(fw * 0.85), fh))
-                    if oscore >= 0.60:
-                        engine.tap(ox + ow // 2, oy + oh // 2)
-                    else:
-                        engine.tap(int(fw * 0.5), int(fh * 0.845))
-                    self.on_log(f"[总攻][{name}] 返回地图：先关掉总攻完成弹窗(score={ds:.2f})")
-                    time.sleep(1.2)
-                    continue
-            bs, bxx, byy, bww, bhh = _match(frame, self.tpl_back,
-                                            region=(0, int(fh * 0.85), int(fw * 0.25), fh))
-            if bs >= 0.60:
-                engine.tap(bxx + bww // 2, byy + bhh // 2)
-                self.on_log(f"[总攻][{name}] 返回地图：点总攻页返回按钮(score={bs:.2f})")
-                time.sleep(1.5)
-                continue
-            pos = engine.match(frame, "close", wide=True)
-            if pos:
-                engine.tap(pos[0], pos[1])
-                self.on_log(f"[总攻][{name}] 返回地图：关闭当前页面/弹窗(score={pos[2]:.2f})")
-                time.sleep(1.5)
-                continue
-            pos = engine.match(frame, "ok", wide=True)
-            if pos:
-                engine.tap(pos[0], pos[1])
-                self.on_log(f"[总攻][{name}] 返回地图：点确定按钮(score={pos[2]:.2f})")
-                time.sleep(1.5)
-                continue
-            engine.tap(int(fw * 0.5), int(fh * 0.94))
-            self.on_log(f"[总攻][{name}] 返回地图：点底部夺金入口(第{step + 1}步)")
-            time.sleep(2.0)
-        return False
+        frame = engine.screenshot()
+        entry = _load("zg_home_entry")
+        if entry is not None:
+            es, ex, ey, ew, eh = _match(frame, entry)
+            if es >= 0.65:
+                engine.tap(ex + ew // 2, ey + eh // 2)
+                self.on_log(f"[总攻][{name}] 自愈：点击夺金入口(score={es:.2f})")
+                time.sleep(2.0)
+                return
+            self.on_log(f"[总攻][{name}] 自愈：主页未找到夺金入口模板")
+        # 兜底：直接点底部中央位置（主页/地图的切换按钮常在同一处）
+        engine.tap(int(w * 0.5), int(h * 0.965))
+        self.on_log(f"[总攻][{name}] 自愈：点击底部中央按钮尝试返回活动")
+        time.sleep(2.0)
+        # 验证
+        frame = engine.screenshot()
+        fh, fw = frame.shape[:2]
+        rs, _, _, _, _ = _match(frame, self.tpl_chat,
+                                region=(int(fw * 0.76), int(fh * 0.68),
+                                        fw, int(fh * 0.88)))
+        self.on_log(f"[总攻][{name}] 自愈后{'已回到' if rs >= 0.62 else '尚未回到'}活动地图")
 
     def _close_chat(self, engine, w, h):
         """只在聊天页时点底部X关闭；已在活动地图页则不动。

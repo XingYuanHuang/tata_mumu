@@ -1,0 +1,42 @@
+# ---- Python ----
+__pycache__/
+*.py[cod]
+*.pyd
+*.egg-info/
+
+# ---- 虚拟环境（换机器重建，不入库） ----
+.venv/
+.venv_*/
+venv/
+env/
+
+# ---- IDE / 工具 ----
+.idea/
+.vscode/
+.workbuddy/
+
+# ---- 日志 ----
+*.log
+@AutomationLog.txt
+
+# ---- 运行时自动生成的实例 IPC 配置 ----
+mumu-ipc-*.json
+
+# ---- 调试截图（失败现场，体积大） ----
+debug_caps/
+_shot_visit/
+
+# ---- 根目录临时诊断文件（模板裁剪图、UIA dump、页面快照） ----
+/_*.png
+/_*.jpg
+/_*.json
+/_page.html
+
+# ---- 本地数据与状态：含账号 / UID 名单 / 处理进度，不入库 ----
+roles.json
+home_visited.json
+uid_list.xlsx
+~$*.xlsx
+
+# ---- 离线依赖包缓存（用 _pipfetch.py 可重建） ----
+_wheels/
