@@ -63,7 +63,7 @@ claimed    结果页 / 领奖弹窗 → 点「好的」/下方 X → 回找朋�
 |------|------|----------|------|
 | `search_icon.png` | 0.89 | [516,516,548,550] | 找朋友页搜索框/放大镜 |
 | `results_title.png` | 0.88 | [235,575,352,602] | "搜索结果"标题 |
-| `suggest_title.png` | 0.89 | [202,575,384,602] | "可能认识的玩家" |
+| `suggest_title.png` | 0.89 | [202,575,384,602] | "可能认识的玩家"（**当前无此图**：spec 保留但文件缺失，`match()` 返回 None，走坐标兜底） |
 | `visit.png` | 0.89 | [127,998,193,1032] | 拜访按钮（**实际以全屏匹配为准**） |
 | `gift.png` + `gift_b.png` | 0.87 | [38,41,111,112] | 礼盒气泡（黄气泡内粉盒+青丝带），**scales**: 1.0/0.92/1.08/0.85/1.16 |
 | `empty_flag.png` + `empty_flag_b.png` | 0.88 | [212,513,250,553] | 空旗猫咪卡片，**scales**: 1.0/0.92/1.08 |
@@ -156,11 +156,24 @@ claimed    结果页 / 领奖弹窗 → 点「好的」/下方 X → 回找朋�
 
 不需要在 `config.py` 里写死实例：
 
-1. 自动扫描 `ProgramFiles\Netease\MuMuPlayer-12.0`
+1. 遍历实际存在的盘符（C~H）查找 MuMu 安装目录，判定依据是三种 adb 布局任一存在：
+   `shell/adb.exe`（旧版）、`nx_main/adb.exe`（新版 MuMu 12）、`nx_device/12.0/shell/adb.exe`；
+   再以 `vms/` + `nx_main/` 组合兜底
 2. 读 `vms/*/configs/vm_config.json` 拿每个实例 ADB 端口
 3. 生成 IPC 配置、连接 MuMu 原生 SDK
 4. **发现几个就登记几个**（第 3、第 4 个模拟器打开就能显示，新增实例默认角色=小号）
 5. 新实例默认角色可在面板下拉框改成主号
+
+adb 路径自动探测顺序（`config.ADB_PATH` 留 `None` 即可，显式配置的路径会先校验存在）：
+
+```
+shell/adb.exe → nx_main/adb.exe → nx_device/12.0/shell/adb.exe
+→ ProgramFiles / ProgramFiles(x86) / LOCALAPPDATA 安装位 → 系统 PATH
+```
+
+> ⚠️ 新版 MuMu 12 **没有 `shell/` 目录**，adb 在 `nx_main\adb.exe`。旧代码只找
+> `shell\adb.exe`，会返回一个不存在的路径，直到"输入 UID"那一步才报 `[WinError 2]`，
+> 那时巡访任务已经排进队列了。
 
 MuMu 12 多开的 ADB 端口按 **+32** 递增：16384 / 16416 / 16448 …
 
@@ -201,31 +214,109 @@ MuMu 12 多开的 ADB 端口按 **+32** 递增：16384 / 16416 / 16448 …
 | `zonggong.py` | 总攻自动参加监控（红点即时 + 60 秒兜底 + 自愈） |
 | `config.py` | 全局配置（UID 位数、实例端口、Excel 路径、QQ 群名） |
 | `index.html` | Web 面板（紫色主题、双通道任务栏） |
-| `roles.json` | 角色持久化（自动生成） |
-| `debug_caps/` | 拜访彻底失败时的现场截图（自动保留最近 20 张） |
-| `visit_assets/` | 13 个巡访模板（含 `_b` 变体）+ 6 个总攻模板（`zg_*.png`）+ `template_specs.json` |
-| `code/fishing_v023/` | 塔塔助手源码（复用 `mumu_io.py`、`windows_io.py`） |
+| `roles.json` | 角色持久化（自动生成，不入库） |
+| `debug_caps/` | 拜访彻底失败时的现场截图（每实例每前缀 10 个槽位循环覆盖，不入库） |
+| `visit_assets/` | 15 个巡访模板（含 2 个 `_b` 变体）+ 6 个总攻模板（`zg_*.png`）= 21 个 png，加 `template_specs.json` |
+| `code/fishing_v023/` | 塔塔助手源码（只复用了 `mumu_io.py`、`windows_io.py`，其余模块未引用） |
+| `启动服务.bat` / `停止服务.bat` | 启动/停止脚本（venv 优先 + 切工作目录 + 开浏览器） |
+| `_pipfetch.py` | 离线装依赖：绕开被代理拦截的 pip，直连镜像抓 cp313 轮子 |
+| `_clear_marks.py` | 清 `uid_list.xlsx` 的 `processed` 标记（重跑名单用） |
+| `_diag_*.py` | 模板/导航/点击的现场诊断脚本（依赖 `code/fishing_v023`） |
+| `.gitignore` | 忽略 venv、运行产物、调试截图与本地数据 |
 
 ---
 
 ## 八、安装与运行
 
-```bash
-# 依赖（已配置清华镜像源，文件在 %APPDATA%\pip\pip.ini）
-pip install -r requirements.txt
+需要 **Python 3.13（64 位）**。
 
-python server.py
+### 1. 依赖
+
+```bash
+python -m venv .venv
 ```
 
-浏览器打开 `http://localhost:8000`
+> ⚠️ **不要直接 `pip install -r requirements.txt`**。本机 pip 会被网络代理拦截：
+> `GET /simple/fastapi/ → 403 Forbidden`，换任何源（清华/阿里/PyPI）结果都一样，
+> 拦截发生在 UA 层，跟源无关。
+
+改用 `_pipfetch.py` 从清华镜像**直连抓取 cp313/win_amd64 轮子**到 `_wheels/`，再离线安装：
+
+```bash
+.venv\Scripts\python.exe _pipfetch.py fastapi starlette pydantic pydantic-core annotated-types ^
+  typing-extensions anyio sniffio idna click h11 colorama uvicorn websockets openpyxl ^
+  et-xmlfile opencv-python-headless numpy python-multipart uiautomation comtypes psutil
+
+.venv\Scripts\python.exe -m pip install --no-index --find-links _wheels -r requirements.txt
+```
+
+若报 `No matching distribution found for xxx`，把 `xxx` 补到第一条命令末尾重跑即可（传递依赖逐层补齐）。
+能正常访问 PyPI 的机器直接 `pip install -r requirements.txt` 也可以，`_wheels/` 不必用。
 
 依赖：`uiautomation, psutil, fastapi, uvicorn, websockets, openpyxl, opencv-python-headless, numpy, python-multipart`
 
-### 前置设置
+### 2. 启动
 
-- **关闭 MuMu 多应用保活**：MuMu 设置 → 高级设置 → 关闭"多应用保活" → 重启模拟器（每个实例都要关）
-- **模拟器保持竖屏**（如 1080x1920），横屏会被拒绝执行
-- 微信/QQ 窗口不能最小化
+双击 **`启动服务.bat`**（优先用 `.venv`、自动切到脚本目录、起服务后开浏览器），或：
+
+```bash
+.venv\Scripts\python.exe server.py
+```
+
+浏览器打开 `http://localhost:8000`。停止用 `停止服务.bat`。
+
+> `server.py` 启动时会把工作目录切到脚本所在目录，所以从计划任务、快捷方式、
+> 或者 `python D:\...\server.py` 这种跨目录启动，也能正常找到 `index.html`、`visit_assets`、
+> `roles.json`、`uid_list.xlsx`。
+
+### 3. 前置设置
+
+- **关闭多应用保活**（硬性门槛，不是性能问题）：`MuMuIO.__init__` 一开头就检查，开着直接抛
+  「后台截图需要关闭模拟器多应用保活」，该实例的巡访引擎创建失败，通道里所有功能都用不了。
+
+  界面：设置 → 高级设置 → 关闭"多应用保活" → 重启实例。
+
+  命令行（**不需要重启**，配置会同步到 `customer_config.json`）。`MuMuManager.exe` 在
+  `<安装目录>\nx_main\` 下，默认即 `D:\Program Files\Netease\MuMuPlayer-12.0\nx_main\`：
+  ```bash
+  cd /d "D:\Program Files\Netease\MuMuPlayer-12.0\nx_main"
+  MuMuManager.exe setting -v 0 -k app_keptlive -val false
+  MuMuManager.exe setting -v 0 -k app_keptlive        # 读回，应为 false
+  ```
+  `-v 0` 是实例序号（instance_1 对应 0），多开逐个改。
+
+- **竖屏 1080×1920，且机型必须是手机不是平板**：MuMu 的 `tablet.1`(2560×1440) 和
+  `tablet.2`(1920×1080) 是**横屏平板预设**，新建实例默认可能就是平板，结果一启动就被判横屏、
+  拒绝巡访。到 MuMu 设置 → 显示 里选手机预设 1080×1920。
+
+  adb 改不了方向：`settings put system user_rotation 0` 对 `SurfaceOrientation` 无效，
+  方向由 MuMu 宿主侧控制。只能用界面或 `resolution_mode`（`phone.2`）改，改完重启实例。
+
+  验证看启动日志：`巡访引擎已初始化 (1080x1920)` 才对，出现 `(1920x1080)` 说明还是横的。
+
+- **微信/QQ 窗口不能最小化**（UIAutomation 读不到消息）
+- **电源计划**：睡眠/休眠设为「从不」。MuMu 走原生 SDK 后台截图、不依赖显示器，
+  但进程被冻结就整个停摆
+
+### 4. 代码仓库
+
+```bash
+git clone git@github.com:XingYuanHuang/tata_mumu.git
+```
+
+主分支 `main`，remote 用 **SSH**（HTTPS 走 Git Credential Manager 会触发设备码登录，
+非交互环境走不通）。密钥：`~/.ssh/id_ed25519`，公钥加在 GitHub → Settings → SSH keys。
+
+以下文件**刻意不入库**（见 `.gitignore`），换机器需要单独准备：
+
+| 文件 | 为什么 |
+|------|--------|
+| `.venv/`、`_wheels/` | 环境与轮子缓存，可用上面两步重建 |
+| `uid_list.xlsx` | UID 名单 + `processed` 进度，含隐私 |
+| `roles.json` | 角色按 `instance_1/2/3` 顺序记录，换机器实例数不同会**错位**，建议删掉重设 |
+| `home_visited.json` | 进家园记录 |
+| `debug_caps/`、`_shot_visit/` | 失败截图，体积大 |
+| `mumu-ipc-*.json`、`*.log` | 运行时自动生成 |
 
 ---
 
@@ -280,8 +371,12 @@ python server.py
 
 ### 巡访失败
 
-去看 `debug_caps/visit_fail_<时间>.png` —— 拜访彻底失败（4 次重试都没进家园）时会自动存现场截图，
-保留最近 20 张。常见画面：
+去看 `debug_caps/` —— 拜访彻底失败（4 次重试都没进家园）时会自动存现场截图。
+
+现行命名 `{前缀}_{串口}_{0..9}.png`：**每个实例每种前缀固定 10 个槽位循环覆盖**
+（`idx % 10`），所以不会无限增长。但早期版本用过时间戳命名
+（`visit_fail_20261021_091329.png`），那些文件匹配不到槽位、**永远不会被覆盖**，
+积多了需要手工清。常见画面：
 
 | 截图显示 | 原因 | 处理 |
 |----------|------|------|
@@ -426,5 +521,11 @@ curl http://localhost:8000/api/zonggong/status
 - 仅支持 Windows
 - 微信/QQ 窗口不能最小化
 - 模拟器必须竖屏；分辨率变化后坐标基准仍按 `height/1033` 等比缩放
+- **MuMu 新建实例默认可能是平板预设**（`tablet.1`=2560×1440 / `tablet.2`=1920×1080，都是横屏），
+  不手动改成手机 1080×1920 就一启动被判横屏、拒绝巡访
+- 巡访模板阈值很紧（0.87~0.89）：720×1280、1440×2560 虽然比例仍是 9:16、坐标计算成立，
+  但模板缩放后要过插值，匹配分掉到 0.86 就直接失败。**建议锁定 1080×1920**，
+  改高度也别改宽高比；总攻宽容得多（`SCALES` 0.80~1.60、阈值 0.65），能容忍分辨率差异
+- 依赖 `MuMu` 原生渲染 SDK（`external_renderer_ipc.dll`）截屏，多应用保活开着会拿不到 surface
 - 模板是从实际游戏画面裁的，游戏 UI 大版本更新后可能需要重裁
 - 需要真实"有礼盒"的环境才能验证完整领取链路，日常样本多为空旗/已领完
