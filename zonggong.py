@@ -6,7 +6,7 @@
   1. 每~3秒截图：先检查「总攻完成」弹框（有就点确定）
   2. 找右下角聊天入口按钮 → 按钮右上角检测红色气泡：
      - 有红点 → 立即点开聊天页（即时响应）
-     - 无红点但距上次检查超过60秒 → 也点开聊天页（兜底防漏）
+     - 无红点但距上次检查超过20秒 → 也点开聊天页（兜底防漏）
      - 都不满足 → 继续等待
   3. 在聊天页找所有「我发起了总攻!」卡片 → 点最底部（最新）一张
   4. 进入总攻页 → 检测底部按钮：若已是「已参与」则跳过，否则点按钮参加
@@ -119,11 +119,11 @@ def _count_bright_red(frame, x1, y1, x2, y2):
 class ZongGongMonitor:
     """总攻自动参加。engines_ref: 返回 {name: VisitEngine} 的可调用（引用server的字典）。"""
 
-    def __init__(self, engines_ref, on_log=None, poll_interval=3.0, check_interval=60.0):
+    def __init__(self, engines_ref, on_log=None, poll_interval=3.0, check_interval=20.0):
         self._engines_ref = engines_ref
         self.on_log = on_log or (lambda s: None)
         self.poll_interval = poll_interval        # 红点检测间隔（秒）
-        self.check_interval = check_interval      # 无红点时的兜底检查间隔（秒）
+        self.check_interval = check_interval      # 无红点时的兜底检查间隔（秒），默认 20
         self._running = False
         self._thread = None
         self._instances = []          # 要监控的实例名
@@ -221,7 +221,7 @@ class ZongGongMonitor:
             return
         self._miss[name] = 0
 
-        # 2. 红点即时 + 60秒兜底，二者满足其一才点开聊天框
+        # 2. 红点即时 + 定时兜底（默认20秒），二者满足其一才点开聊天框
         red = _count_bright_red(frame, bx + bw * 0.55, by - bh * 0.18,
                                 bx + bw * 1.12, by + bh * 0.35)
         has_red = red >= RED_MIN_PIXELS
