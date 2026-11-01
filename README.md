@@ -218,7 +218,12 @@ MuMu 12 多开的 ADB 端口按 **+32** 递增：16384 / 16416 / 16448 …
 | `debug_caps/` | 拜访彻底失败时的现场截图（每实例每前缀 10 个槽位循环覆盖，不入库） |
 | `visit_assets/` | 15 个巡访模板（含 2 个 `_b` 变体）+ 6 个总攻模板（`zg_*.png`）= 21 个 png，加 `template_specs.json` |
 | `code/fishing_v023/` | 塔塔助手源码（只复用了 `mumu_io.py`、`windows_io.py`，其余模块未引用） |
-| `启动服务.bat` / `停止服务.bat` | 启动/停止脚本（venv 优先 + 切工作目录 + 开浏览器） |
+| `启动服务.bat` / `停止服务.bat` | 启动/停止脚本（venv 优先 + 切工作目录 + 开浏览器；停止按 8000 端口 kill） |
+| `装依赖.bat` | 一键装依赖：建 venv → `_pipfetch.py` 抓轮子 → 离线安装 → 验证导入 |
+
+> 三个 `.bat` 全部是**纯 ASCII + CRLF**，不要往里面加中文、也不要改成 LF。
+> cmd 的代码页在 936 / 65001 之间会变，非 ASCII 的批处理会被从中间截断，
+> 报 `'xxx' 不是内部或外部命令`，而且是随机复现的。
 | `_pipfetch.py` | 离线装依赖：绕开被代理拦截的 pip，直连镜像抓 cp313 轮子 |
 | `_clear_marks.py` | 清 `uid_list.xlsx` 的 `processed` 标记（重跑名单用） |
 | `_diag_*.py` | 模板/导航/点击的现场诊断脚本（依赖 `code/fishing_v023`） |
@@ -232,15 +237,28 @@ MuMu 12 多开的 ADB 端口按 **+32** 递增：16384 / 16416 / 16448 …
 
 ### 1. 依赖
 
+**最简单：双击 `装依赖.bat`**，它会建 venv、抓轮子、离线安装、验证导入，全程自动。
+
+手动做的话：
+
 ```bash
 python -m venv .venv
 ```
 
-> ⚠️ **不要直接 `pip install -r requirements.txt`**。本机 pip 会被网络代理拦截：
-> `GET /simple/fastapi/ → 403 Forbidden`，换任何源（清华/阿里/PyPI）结果都一样，
-> 拦截发生在 UA 层，跟源无关。
+> ⚠️ **不要直接 `pip install -r requirements.txt`**。pip 的请求会被宿主按
+> **User-Agent 精确拦截**，返回 `403 Forbidden`。换任何源（清华/阿里/腾讯/官方）、
+> 清空所有代理变量、`--proxy ""`、`NO_PROXY` 全部无效——因为拦截不看源也不看代理。
+>
+> 实测对照（同一个 URL，只改 UA）：
+>
+> | UA | 结果 |
+> |---|---|
+> | `pip/26.1.2 {...}` | **403** |
+> | Python-urllib 默认 | 200 |
+> | curl/8.4.0 | 200 |
+> | Mozilla/5.0 | 403 |
 
-改用 `_pipfetch.py` 从清华镜像**直连抓取 cp313/win_amd64 轮子**到 `_wheels/`，再离线安装：
+改用 `_pipfetch.py`（urllib 默认 UA）从清华镜像**直连抓取 cp313/win_amd64 轮子**到 `_wheels/`，再离线安装：
 
 ```bash
 .venv\Scripts\python.exe _pipfetch.py fastapi starlette pydantic pydantic-core annotated-types ^
