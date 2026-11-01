@@ -12,6 +12,12 @@
   4. 进入总攻页 → 检测底部按钮：若已是「已参与」则跳过，否则点按钮参加
   5. 点左下角返回按钮 → 回到聊天页 → 点底部 X 关闭聊天
 
+特例：多个总攻发在同一地块时，点卡片不会进单一总攻页，而是弹出「总攻列表页」
+（左上角「总攻」横幅，每行左侧白底地块缩略图、右侧「申请/已申请」按钮，
+底部中央白色 X 关闭）。该页不属于总攻页，旧逻辑会一直判定「未进入总攻页」
+并每 20 秒重试，因此单独识别处理：已申请的行跳过，未申请的行点按钮，
+最后点底部 X 关闭并进入冷却。
+
 模板（visit_assets/）：
   zg_chat_btn.png  聊天入口按钮（地图右下角，白色气泡图标）
   zg_card.png      聊天里的总攻卡片（紫色部分，稳定区域）
@@ -19,6 +25,8 @@
   zg_back.png      总攻页左下角返回按钮
   zg_done.png      总攻完成弹框标题（判断弹框出现）
   zg_ok.png        弹框「确定」按钮
+  zg_title.png     总攻列表页左上角的「总攻」横幅（判断是否在列表页）
+  zg_applied.png   总攻列表页每行的灰色「已申请」按钮
 """
 import threading
 import time
@@ -138,6 +146,9 @@ class ZongGongMonitor:
         self.tpl_back = _load("zg_back")
         self.tpl_done = _load("zg_done")
         self.tpl_ok = _load("zg_ok")
+        self.tpl_title = _load("zg_title")        # 列表页「总攻」横幅
+        self.tpl_applied = _load("zg_applied")    # 列表页灰色「已申请」按钮
+        self.tpl_expired = _load("zg_expired")    # 聊天卡片底部「已过期」条
 
     # ── 状态 ──
     @property
@@ -150,7 +161,9 @@ class ZongGongMonitor:
             "instances": list(self._instances),
             "templates": {n: (v is not None) for n, v in
                           [("chat_btn", self.tpl_chat), ("card", self.tpl_card),
-                           ("joined", self.tpl_joined), ("back", self.tpl_back)]},
+                           ("joined", self.tpl_joined), ("back", self.tpl_back),
+                           ("title", self.tpl_title), ("applied", self.tpl_applied),
+                           ("expired", self.tpl_expired)]},
         }
 
     def start(self, instances=None):
@@ -204,6 +217,11 @@ class ZongGongMonitor:
             frame = engine.screenshot()
             h, w = frame.shape[:2]
 
+        # 0.5 停在总攻列表页（上次没关掉 / 多个总攻在同一地块）→ 处理并关闭
+        #     放在冷却判断之前，否则页面会一直挂在屏幕上挡住巡访
+        if self._handle_list_page(name, engine, frame):
+            return
+
         if now - self._cooldown.get(name, 0) < self.COOLDOWN_SEC:
             return
 
@@ -248,8 +266,16 @@ class ZongGongMonitor:
             return
 
         # 从最底部（最新）开始尝试，最多试 3 张
+        expired = 0
+        tried = 0
         for idx, (score, cx, cy, cw2, ch2) in enumerate(reversed(cards[-3:])):
             tag = "最新一张" if idx == 0 else f"倒数第{idx + 1}张"
+            # 已过期的卡片点了没反应，会白白耗掉一轮，直接跳过
+            if self._card_expired(frame, cx, cy, cw2, ch2):
+                expired += 1
+                self.on_log(f"[总攻][{name}] {tag}已过期，跳过")
+                continue
+            tried += 1
             self.on_log(f"[总攻][{name}] 找到{len(cards)}张卡片，点击{tag}(score={score:.2f})")
             engine.tap(cx + cw2 // 2, cy + int(ch2 * 0.8))
             time.sleep(1.8)
@@ -258,6 +284,9 @@ class ZongGongMonitor:
             h, w = frame.shape[:2]
             if self._on_zonggong_page(frame):
                 break
+            # 点卡片落到了「总攻列表页」（同地块多个总攻）→ 在这里处理掉
+            if self._handle_list_page(name, engine, frame):
+                return
             self.on_log(f"[总攻][{name}] {tag}未进入总攻页，尝试下一张")
             # 可能还在聊天页，回到聊天继续点下一张
             self._close_chat(engine, w, h)
@@ -268,6 +297,11 @@ class ZongGongMonitor:
                 self.on_log(f"[总攻][{name}] 已离开聊天页，结束本轮")
                 return
         else:
+            if expired and not tried:
+                # 全是过期卡片：不设冷却，新总攻带红点时会立刻响应
+                self.on_log(f"[总攻][{name}] {expired} 张卡片均已过期，关闭聊天等待新总攻")
+                self._close_chat(engine, w, h)
+                return
             self.on_log(f"[总攻][{name}] 所有卡片都未进入总攻页，关闭聊天")
             self._close_chat(engine, w, h)
             self._cooldown[name] = now
@@ -348,6 +382,118 @@ class ZongGongMonitor:
                                 region=(0, int(h * 0.85), int(w * 0.25), h))
         return bs >= 0.65
 
+    def _card_expired(self, frame, cx, cy, cw, ch):
+        """卡片底部是否有「已过期」条（过期卡片点了不会有任何反应）。"""
+        if self.tpl_expired is None:
+            return False
+        h, w = frame.shape[:2]
+        region = (int(w * 0.15), int(cy + ch * 0.5), w, min(h, int(cy + ch * 1.4)))
+        if region[3] - region[1] < 40:
+            return False
+        s, *_ = _match(frame, self.tpl_expired, region=region)
+        return s >= 0.80
+
+    # ── 总攻列表页（多个总攻发在同一地块）──
+
+    def _find_bottom_x(self, frame):
+        """底部中央白色 X 的中心点。找不到返回 (None, None)。
+
+        列表页/聊天页的关闭按钮是白色粗 X，中心在 0.968h 附近；
+        旧代码写死 0.955h 会点到 X 上方一点点，页面关不掉。
+        """
+        h, w = frame.shape[:2]
+        x0, y0 = int(w * 0.30), int(h * 0.90)
+        reg = frame[y0:h, x0:int(w * 0.70)]
+        if reg.size == 0:
+            return None, None
+        r = reg[:, :, 2].astype(int)
+        g = reg[:, :, 1].astype(int)
+        b = reg[:, :, 0].astype(int)
+        m = (r > 225) & (g > 225) & (b > 225)
+        ys, xs = np.where(m)
+        if len(xs) < 200:
+            return None, None
+        return int(xs.mean()) + x0, int(ys.mean()) + y0
+
+    def _zg_list_rows(self, frame):
+        """识别「总攻列表页」，返回 [(行中心y, 该行是否已申请), ...]；不是该页返回 None。
+
+        判据：左上角「总攻」横幅（zg_title）命中，且左侧白底地块面板能分出若干行。
+        行内右侧按钮（灰）= 已申请；不是灰色说明还没申请。
+        """
+        h, w = frame.shape[:2]
+        if self.tpl_title is None:
+            return None
+        ts, *_ = _match(frame, self.tpl_title,
+                        region=(0, 0, int(w * 0.6), int(h * 0.25)))
+        if ts < 0.75:
+            return None
+
+        r = frame[:, :, 2].astype(int)
+        g = frame[:, :, 1].astype(int)
+        b = frame[:, :, 0].astype(int)
+        white = ((r > 215) & (g > 215) & (b > 215)).astype(np.uint8)
+        y0, y1 = int(h * 0.10), int(h * 0.75)
+        prof = white[y0:y1, int(w * 0.05):int(w * 0.28)].mean(axis=1)
+        on = prof > 0.45
+        min_run = int(h * 0.06)
+        bands, start = [], None
+        for i, v in enumerate(on):
+            if v and start is None:
+                start = i
+            elif not v and start is not None:
+                if i - start >= min_run:
+                    bands.append((start + y0, i + y0))
+                start = None
+        if start is not None and len(on) - start >= min_run:
+            bands.append((start + y0, y1))
+
+        rows = []
+        half = int(h * 0.05)
+        for a, bd in bands:
+            cy = (a + bd) // 2
+            applied = False
+            if self.tpl_applied is not None:
+                s, *_ = _match(frame, self.tpl_applied,
+                               region=(int(w * 0.55), max(0, cy - half), w,
+                                       min(h, cy + half)))
+                applied = s >= 0.80
+            rows.append((cy, applied))
+        return rows
+
+    def _handle_list_page(self, name, engine, frame):
+        """在总攻列表页时：未申请的行点按钮，已申请的跳过，最后点底部 X 关闭。
+
+        返回 True 表示已处理（调用方应立即 return，避免继续走单页总攻流程）。
+        """
+        rows = self._zg_list_rows(frame)
+        if rows is None:
+            return False
+        h, w = frame.shape[:2]
+
+        todo = [cy for cy, applied in rows if not applied]
+        for cy in todo:
+            engine.tap(int(w * 0.777), cy)
+            self.on_log(f"[总攻][{name}] 列表页 y={cy} 行未申请，已点击申请按钮")
+            time.sleep(1.3)
+
+        if rows:
+            n_app = len(rows) - len(todo)
+            tail = f"，已点击未申请的 {len(todo)} 行" if todo else "，全部已申请，无需重复点"
+            self.on_log(f"[总攻][{name}] 总攻列表页（同地块 {len(rows)} 条）：已申请 {n_app} 条{tail}")
+        else:
+            self.on_log(f"[总攻][{name}] 总攻列表页：未识别到条目，直接关闭")
+
+        cx, cy = self._find_bottom_x(frame)
+        if cx is None:
+            cx, cy = int(w * 0.5), int(round(h * 0.968))
+        engine.tap(cx, cy)
+        time.sleep(1.0)
+
+        self._cooldown[name] = time.time()
+        self._last_check[name] = time.time()
+        return True
+
     def _heal_to_map(self, engine, name, w, h):
         """自愈：不在活动地图时尝试返回。
 
@@ -392,7 +538,16 @@ class ZongGongMonitor:
                                             fw, int(fh * 0.88)))
             if rs >= 0.62:
                 return   # 已在地图页，什么都不点
-            engine.tap(int(fw * 0.5), int(fh * 0.955))
+            cx, cy = None, None
+            # 只有确认是聊天页/列表页时才按检测到的 X 点；否则保持原坐标，
+            # 免得在地图页把「退出活动」当成关闭按钮点了
+            if self._zg_list_rows(frame) is not None or (
+                    self.tpl_card is not None
+                    and _match_all(frame, self.tpl_card, thresh=0.65)):
+                cx, cy = self._find_bottom_x(frame)
+            if cx is None:
+                cx, cy = int(fw * 0.5), int(round(fh * 0.955))
+            engine.tap(cx, cy)
             time.sleep(1.0)
         except Exception as e:
             self.on_log(f"[总攻] 关闭聊天异常: {e}")
