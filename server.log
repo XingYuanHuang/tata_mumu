@@ -1,8 +1,0 @@
-INFO:     Started server process [32060]
-INFO:     Waiting for application startup.
-INFO:     Application startup complete.
-INFO:     Uvicorn running on http://0.0.0.0:8000 (Press CTRL+C to quit)
-INFO:     127.0.0.1:49667 - "GET /api/instance/screenshot/instance_1 HTTP/1.1" 200 OK
-INFO:     127.0.0.1:49667 - "GET /api/instance/screenshot/instance_2 HTTP/1.1" 200 OK
-INFO:     127.0.0.1:49667 - "GET /api/instance/screenshot/instance_3 HTTP/1.1" 200 OK
-INFO:     127.0.0.1:49670 - "GET /api/status HTTP/1.1" 200 OK

@@ -211,6 +211,12 @@ def _is_main_instance(name):
 home_visitor = HomeVisitor(lambda: visit_engines, _is_main_instance,
                            on_log=add_log, on_record=_broadcast_home_record)
 
+# ── 钓鱼大赛多实例控制（每实例一个 bridge 子进程 + 纪录收集） ──
+from fishing_manager import FishingManager
+
+fishing = FishingManager(on_log=add_log,
+                         on_record=lambda rec: broadcast({"type": "fishing_record", "data": rec}))
+
 
 monitor_running = False
 monitor_thread = None
@@ -285,6 +291,7 @@ async def shutdown():
     global monitor_running
     monitor_running = False
     home_visitor.stop()
+    fishing.stop_all()
     excel_reader.stop()
     zonggong_mon.stop()
     task_handler.stop()
@@ -320,6 +327,8 @@ async def get_status():
         "uid_length": UID_LENGTH,
         "home": home_visitor.status(),
         "stats": task_handler.get_stats(),
+        "fishing": fishing.status(),
+        "fishing_available": fishing.available_instances(),
     }
 
 
@@ -563,6 +572,72 @@ async def home_clear():
     n = home_visitor.clear()
     add_log(f"进家园记录已清空（{n} 条）")
     return {"ok": True, "cleared": n, **home_visitor.status()}
+
+
+# ── 钓鱼大赛：多实例启动/暂停/停止 + 刷新纪录 ──
+
+@app.post("/api/fishing/start")
+async def fishing_start(body: dict):
+    """启动某实例的钓鱼流程。
+
+    body: {"instance": "instance_3", "limit": 30, "miss_min": 20, "miss_max": 30}
+    """
+    name = body.get("instance")
+    if not name:
+        return {"ok": False, "error": "缺少 instance"}
+    r = fishing.start(name,
+                      limit=int(body.get("limit", 30)),
+                      miss_min=int(body.get("miss_min", 20)),
+                      miss_max=int(body.get("miss_max", 30)),
+                      bait=bool(body.get("bait", False)))
+    if not r.get("ok"):
+        add_log(f"[钓鱼] {name} 启动失败: {r.get('error')}")
+    return r
+
+
+@app.post("/api/fishing/bait")
+async def fishing_bait(body: dict):
+    """随时开启/关闭某实例的撒鱼饵模式（运行中即时生效，未运行则记住待启动生效）。"""
+    name = body.get("instance")
+    if not name:
+        return {"ok": False, "error": "缺少 instance"}
+    r = fishing.set_bait(name, bool(body.get("on", False)))
+    add_log(f"[钓鱼] {name} 撒鱼饵模式{'开启' if body.get('on') else '关闭'}")
+    return r
+
+
+@app.post("/api/fishing/pause")
+async def fishing_pause(body: dict):
+    return fishing.pause(body.get("instance"))
+
+
+@app.post("/api/fishing/resume")
+async def fishing_resume(body: dict):
+    return fishing.resume(body.get("instance"))
+
+
+@app.post("/api/fishing/stop")
+async def fishing_stop(body: dict):
+    return fishing.stop(body.get("instance"))
+
+
+@app.get("/api/fishing/status")
+async def fishing_status():
+    return {"ok": True, "workers": fishing.status(),
+            "available": fishing.available_instances()}
+
+
+@app.get("/api/fishing/records")
+async def fishing_records():
+    return {"ok": True, "records": fishing.records_status()}
+
+
+@app.post("/api/fishing/records/clear")
+async def fishing_records_clear(body: dict = None):
+    name = (body or {}).get("instance")
+    n = fishing.clear_records(name)
+    add_log(f"[钓鱼] 纪录已清空（{name or '全部'}，{n} 条）")
+    return {"ok": True, "cleared": n, "records": fishing.records_status()}
 
 
 @app.post("/api/adb/roles")
