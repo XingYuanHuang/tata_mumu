@@ -104,7 +104,8 @@ class ZongGongMonitor:
         self._thread = None
         self._instances = []          # 要监控的实例名
         self._cooldown = {}           # name -> 上次参加完成时间（短暂冷却防UI竞态）
-        self._miss = {}               # name -> 连续不在地图/聊天页的轮数（自愈用）
+        self._miss = {}               # name -> 连续未知页面轮数（升级恢复用）
+        self._stuck_steps = {}        # name -> 同一卡点连续操作次数（✕无效时升级用）
         self._last_record = {}        # 卡死/错误记录节流：key -> 上次记录时间
         self.COOLDOWN_SEC = 5         # 参加一轮后短暂冷却（按钮变灰动画期间不重扫）
 
@@ -215,6 +216,7 @@ class ZongGongMonitor:
             if rs >= 0.62:
                 # 在总攻页（活动地图）→ 点进聊天窗页
                 self._miss[name] = 0
+                self._stuck_steps[name] = 0
                 self.on_log(f"[总攻][{name}] 从总攻页点进聊天窗")
                 engine.tap(bx + bw // 2, by + bh // 2)
                 time.sleep(1.6)
@@ -222,34 +224,60 @@ class ZongGongMonitor:
                 on_chat = self._is_chat_page(frame)
         else:
             self._miss[name] = 0
+            self._stuck_steps[name] = 0
 
         if not on_chat:
-            # 不在聊天页也不在地图页：可能停在总攻详情/列表页（上轮返回没生效）
+            # 不在聊天页也不在地图页：卡在某个页面，逐级识别并恢复
             h, w = frame.shape[:2]
+            # a) 返回键可见（总攻详情页等）→ 按返回
             bs, bxx, byy, bww, bhh = _match(frame, self.tpl_back,
                                             region=(0, int(h * 0.85), int(w * 0.25), h))
             if bs >= 0.60:
                 engine.tap(bxx + bww // 2, byy + bhh // 2)
                 self._miss[name] = 0
+                self._stuck_steps[name] = 0
                 self._record(name, "卡死：检测到停在总攻页，已按返回恢复")
-                self.on_log(f"[总攻][{name}] 检测到停在总攻页，按返回恢复（已记录）")
+                self.on_log(f"[总攻][{name}] 检测到停在总攻页（返回键score={bs:.2f}），"
+                            f"按返回恢复（已记录）")
                 time.sleep(1.2)
                 return
-            # 列表页（无返回键）：检测底部✕按实际位置关闭，不等60秒自愈
+            # b) 底部✕（总攻列表页/矿点详情页等）→ 按实际位置点击；
+            #    连续3次点击页面没变 = ✕无效或误识别 → 升级按系统返回键
             cx = self._find_close_x(frame)
             if cx:
-                engine.tap(cx[0], cx[1])
-                self._miss[name] = 0
-                self._record(name, f"卡死：检测到停在带✕的页面({cx[0]},{cx[1]})，已点击关闭")
-                self.on_log(f"[总攻][{name}] 检测到底部✕({cx[0]},{cx[1]})，点击关闭（已记录）")
+                st = self._stuck_steps.get(name, 0) + 1
+                self._stuck_steps[name] = st
+                if st >= 3:
+                    engine.key_event(4)   # 安卓系统返回键
+                    self.on_log(f"[总攻][{name}] 点✕({cx[0]},{cx[1]})未生效x{st}，"
+                                f"改按系统返回键")
+                    if st >= 6:
+                        self._stuck_steps[name] = 0
+                        self._record(name, f"卡死：✕与返回键均未生效x{st}，触发自愈")
+                        self.on_log(f"[总攻][{name}] ✕和返回键都不管用，触发自愈（已记录）")
+                        self._heal_to_map(engine, name, w, h)
+                else:
+                    engine.tap(cx[0], cx[1])
+                    self._miss[name] = 0
+                    self._record(name, f"卡死：检测到停在带✕的页面({cx[0]},{cx[1]})，已点击关闭")
+                    self.on_log(f"[总攻][{name}] 检测到底部✕({cx[0]},{cx[1]})，"
+                                f"点击关闭（已记录）")
                 time.sleep(1.2)
                 return
+            # c) 未知页面：报页面特征 + 升级恢复（系统返回→自愈），不再干等60秒
             self._miss[name] = self._miss.get(name, 0) + 1
-            if self._miss[name] >= 20:   # 连续~60秒不在已知页面
-                self._miss[name] = 0
-                self._record(name, "异常：连续60秒不在活动地图，触发自愈")
-                self.on_log(f"[总攻][{name}] 连续60秒不在活动地图，尝试自愈返回（已记录）")
-                self._heal_to_map(engine, name, w, h)
+            miss = self._miss[name]
+            if miss >= 2:
+                desc = self._describe_page(frame)
+                self._record(name, f"未知页面x{miss}：{desc}")
+                if miss >= 5:
+                    self._miss[name] = 0
+                    self.on_log(f"[总攻][{name}] 未知页面x{miss}({desc})，触发自愈（已记录）")
+                    self._heal_to_map(engine, name, w, h)
+                else:
+                    engine.key_event(4)
+                    self.on_log(f"[总攻][{name}] 未知页面x{miss}({desc})，按系统返回键")
+                time.sleep(1.2)
             return
 
         # 3. 聊天窗页：扫描绿色「参与」按钮条（最底部=最新优先）
@@ -404,25 +432,40 @@ class ZongGongMonitor:
             self._participate_list(name, engine)
 
     def _find_close_x(self, frame):
-        """检测底部中央的白色✕关闭按钮（列表页专用），返回中心像素坐标或None。
+        """检测底部中央的白色✕关闭按钮，返回中心像素坐标或None。
 
-        列表页没有左下角返回键，只有底部 ✕，且其中心在 ~0.968h——
-        写死 0.955h 会差 25px 点空（11-02 踩过的坑），必须检测后按实际位置点。
-        搜索区域 x 0.30~0.70w、y 0.88h~底部，白色像素（RGB全>225）质心。
+        必须用连通域找✕「字形本体」，不能用白色像素质心——矿点详情页
+        下半截是大块白色背景，质心会落在背景上点空，点击无效还无限重试
+        （11-06 卡死根因）。两个已知✕页面（总攻列表页/矿点详情页）的✕
+        都在 ~0.967h、白色压在深色底上，✕字形约 50~100px 见方。
+        搜索区域 y 0.92h~底部、x 0.25~0.75w；合格连通域：
+        面积>=120、宽高均 25~160px、宽高比 0.4~2.5、且宽 < 0.15w（排除背景块）。
+        取最靠下的合格连通域。
         注意：本方法只在"已确认不在地图页"时调用——地图底部中央的 ✕ 是
         「退出活动」，绝不能误点。
         """
         h, w = frame.shape[:2]
-        x1, x2 = int(w * 0.30), int(w * 0.70)
-        y1, y2 = int(h * 0.88), h
-        sub = frame[y1:y2, x1:x2]
-        white = (sub[:, :, 0] > 225) & (sub[:, :, 1] > 225) & (sub[:, :, 2] > 225)
-        if int(white.sum()) < 80:   # ✕ 本体像素量级几百，80 以下视为没有
-            return None
-        ys, xs = np.where(white)
-        cx = int(np.median(xs)) + x1
-        cy = int(np.median(ys)) + y1
-        return cx, cy
+        x1, x2 = int(w * 0.25), int(w * 0.75)
+        y1 = int(h * 0.92)
+        sub = frame[y1:h, x1:x2]
+        white = ((sub[:, :, 0] > 215) & (sub[:, :, 1] > 215) &
+                 (sub[:, :, 2] > 215)).astype(np.uint8)
+        n, _, stats, _ = cv2.connectedComponentsWithStats(white, connectivity=8)
+        best = None
+        for i in range(1, n):
+            x, y, bw, bh, area = stats[i]
+            if area < 120 or bw < 25 or bh < 25:
+                continue
+            if bw > w * 0.15 or bh > h * 0.10:
+                continue   # 太大 = 白色背景块，不是✕字形
+            ratio = bw / max(bh, 1)
+            if not (0.4 <= ratio <= 2.5):
+                continue
+            cy = y + bh / 2 + y1
+            cx = x + bw / 2 + x1
+            if best is None or cy > best[1]:
+                best = (int(cx), int(cy))
+        return best
 
     def _bands_same(self, b1, b2, tol=0.02):
         """比较两次扫描的按钮带列表是否一致（数量、位置、颜色都同）。"""
@@ -586,6 +629,18 @@ class ZongGongMonitor:
                 pass
             self._record(name, "卡死：4轮返回后仍未回到总攻页（已存现场截图）")
             self.on_log(f"[总攻][{name}] 卡死：4轮后仍未回总攻页（已记录+存图）")
+
+    def _describe_page(self, frame):
+        """未知页面的特征描述（写进日志帮助人工识别），非严格判定。"""
+        h, w = frame.shape[:2]
+        rs, *_ = _match(frame, self.tpl_chat,
+                        region=(int(w * 0.76), int(h * 0.68), w, int(h * 0.88)))
+        bs, *_ = _match(frame, self.tpl_back,
+                        region=(0, int(h * 0.85), int(w * 0.25), h))
+        sub = frame[int(0.10 * h):int(0.85 * h), int(0.02 * w):int(0.16 * w)]
+        dark = (sub.max(axis=2) < 90).mean()
+        has_x = "有" if self._find_close_x(frame) else "无"
+        return (f"聊天入口{rs:.2f}/返回键{bs:.2f}/左暗比{dark:.2f}/底✕{has_x}")
 
     def _is_chat_page(self, frame):
         """判断当前是否在聊天窗页。
