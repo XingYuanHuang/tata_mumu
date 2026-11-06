@@ -1,5 +1,5 @@
 {
   "instance_1": "main",
-  "instance_2": "worker",
+  "instance_2": "main",
   "instance_3": "main"
 }

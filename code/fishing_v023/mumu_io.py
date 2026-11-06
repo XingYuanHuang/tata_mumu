@@ -57,10 +57,16 @@ class MuMuIO:
         from windows_io import WindowsIO
         self.desktop_keys=WindowsIO() # Only hotkey/mutex reads; no desktop input is used.
     def resolution(self):
-        w,h=C.c_int(),C.c_int()
-        ret=self.lib.nemu_capture_display(self.connect_id,0,0,C.byref(w),C.byref(h),None)
-        if ret!=0 or not 1<=w.value<=4096 or not 1<=h.value<=4096:raise RuntimeError('MuMu 后台截图分辨率读取失败')
-        return w.value,h.value
+        # MuMu 后台 IPC 偶发瞬断（nemu rpc 1722 同类）：单次读取失败就整个
+        # 会话停止太脆。有限重试扛过瞬断；分辨率真变了时依然会最终报错。
+        last=None
+        for _ in range(6):
+            w,h=C.c_int(),C.c_int()
+            ret=self.lib.nemu_capture_display(self.connect_id,0,0,C.byref(w),C.byref(h),None)
+            if ret==0 and 1<=w.value<=4096 and 1<=h.value<=4096:
+                return w.value,h.value
+            last=ret;time.sleep(0.12)
+        raise RuntimeError(f'MuMu 后台截图分辨率读取失败 (ret={last})')
     def screenshot(self):
         with self.lock:
             width,height=self.resolution()

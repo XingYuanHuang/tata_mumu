@@ -449,13 +449,19 @@ class Controller:
                     self.changed_since=None;self.motion.reset();self.last_progress=t
                     self.qte_miss_pending=False;self.qte_last_fire=t
                     self.event('qte_miss_grace_unlock')
-                elif not self.qte_ack and t-self.qte_time>3.2:
+                elif not self.qte_ack and t-self.qte_time>(
+                        1.1 if (o.target is not None and o.x is not None) else 3.2):
                     # 点击后长时间无反馈不一定是识别坏了：普通点击落空（游标
                     # 没进黄区）时游戏同样不结束本轮；大鱼还可能是同一黄区
                     # 需要多次命中的重复轮。游戏 QTE 有倒计时，本轮必然结束。
                     # 识别健康（黄区+游标都在）时只解锁继续瞄准、不计入停止
                     # 计数；识别退化（看不到黄区或游标）才累计，连续 2 次仍
                     # 无反馈才判定画面异常并停止会话。
+                    # 实测（2026-11-05）：本游戏版本的命中闪光检测不到
+                    # （flash_fraction 始终 <0.07，阈值 0.20），旧版固定等
+                    # 3.2s 才解锁，点击间隔被拉到 3~5s，大鱼倒计时内点不满
+                    # 次数就脱钩。识别健康时降到 1.1s：游标还在黄区里就尽快
+                    # 补点；识别退化时仍保持 3.2s，避免误判停机。
                     healthy=o.target is not None and o.x is not None
                     if healthy:
                         self.qte_locked=False;self.qte_ack=False;self.left_target=False
