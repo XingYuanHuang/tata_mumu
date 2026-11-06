@@ -226,7 +226,6 @@ class ZongGongMonitor:
         if not on_chat:
             # 不在聊天页也不在地图页：可能停在总攻详情/列表页（上轮返回没生效）
             h, w = frame.shape[:2]
-            self._miss[name] = self._miss.get(name, 0) + 1
             bs, bxx, byy, bww, bhh = _match(frame, self.tpl_back,
                                             region=(0, int(h * 0.85), int(w * 0.25), h))
             if bs >= 0.60:
@@ -236,6 +235,16 @@ class ZongGongMonitor:
                 self.on_log(f"[总攻][{name}] 检测到停在总攻页，按返回恢复（已记录）")
                 time.sleep(1.2)
                 return
+            # 列表页（无返回键）：检测底部✕按实际位置关闭，不等60秒自愈
+            cx = self._find_close_x(frame)
+            if cx:
+                engine.tap(cx[0], cx[1])
+                self._miss[name] = 0
+                self._record(name, f"卡死：检测到停在带✕的页面({cx[0]},{cx[1]})，已点击关闭")
+                self.on_log(f"[总攻][{name}] 检测到底部✕({cx[0]},{cx[1]})，点击关闭（已记录）")
+                time.sleep(1.2)
+                return
+            self._miss[name] = self._miss.get(name, 0) + 1
             if self._miss[name] >= 20:   # 连续~60秒不在已知页面
                 self._miss[name] = 0
                 self._record(name, "异常：连续60秒不在活动地图，触发自愈")
@@ -394,12 +403,44 @@ class ZongGongMonitor:
         else:
             self._participate_list(name, engine)
 
+    def _find_close_x(self, frame):
+        """检测底部中央的白色✕关闭按钮（列表页专用），返回中心像素坐标或None。
+
+        列表页没有左下角返回键，只有底部 ✕，且其中心在 ~0.968h——
+        写死 0.955h 会差 25px 点空（11-02 踩过的坑），必须检测后按实际位置点。
+        搜索区域 x 0.30~0.70w、y 0.88h~底部，白色像素（RGB全>225）质心。
+        注意：本方法只在"已确认不在地图页"时调用——地图底部中央的 ✕ 是
+        「退出活动」，绝不能误点。
+        """
+        h, w = frame.shape[:2]
+        x1, x2 = int(w * 0.30), int(w * 0.70)
+        y1, y2 = int(h * 0.88), h
+        sub = frame[y1:y2, x1:x2]
+        white = (sub[:, :, 0] > 225) & (sub[:, :, 1] > 225) & (sub[:, :, 2] > 225)
+        if int(white.sum()) < 80:   # ✕ 本体像素量级几百，80 以下视为没有
+            return None
+        ys, xs = np.where(white)
+        cx = int(np.median(xs)) + x1
+        cy = int(np.median(ys)) + y1
+        return cx, cy
+
+    def _bands_same(self, b1, b2, tol=0.02):
+        """比较两次扫描的按钮带列表是否一致（数量、位置、颜色都同）。"""
+        if len(b1) != len(b2):
+            return False
+        for (a1, b_1, act1), (a2, b_2, act2) in zip(b1, b2):
+            if act1 != act2 or abs(a1 - a2) > tol or abs(b_1 - b_2) > tol:
+                return False
+        return True
+
     def _participate_list(self, name, engine):
         """列表页参与子循环：扫描→逐个点绿→上滑翻页→重扫，直到到底。
 
         - 绿「参与」→ 点；灰「已申请/申请中/已过期」→ 天然跳过
         - 点击没生效的按钮，重扫时会补点（点完 continue 重扫本屏）
-        - 本屏无绿 → 上滑一屏；滑动前后指纹差很小 = 画面没动 = 到底
+        - 本屏无绿 → 上滑一屏；滑动后画面指纹没动 或 按钮带与滑动前一致 = 到底
+          （不能只看指纹：列表页背景有星光/呼吸动画，倒计时每秒都在变，
+           指纹差可能一直大于阈值，导致白白滑满 12 次）
         - 上限 LIST_MAX_CLICKS / LIST_MAX_SWIPES 防死循环
         """
         clicks = 0
@@ -407,7 +448,8 @@ class ZongGongMonitor:
         while swipes < LIST_MAX_SWIPES and clicks < LIST_MAX_CLICKS:
             frame = engine.screenshot()
             fh, fw = frame.shape[:2]
-            greens = [(a, bnd) for a, bnd, act in self._scan_join_buttons(frame) if act]
+            bands = self._scan_join_buttons(frame)
+            greens = [(a, bnd) for a, bnd, act in bands if act]
             if greens:
                 for a, bnd in greens:
                     if clicks >= LIST_MAX_CLICKS:
@@ -426,7 +468,11 @@ class ZongGongMonitor:
             frame = engine.screenshot()
             fp_after = _fingerprint(frame)
             diff = float(np.abs(fp_after - fp_before).mean())
-            if diff < SWIPE_FP_DIFF:
+            bands_after = self._scan_join_buttons(frame)
+            greens_after = [(a, bnd) for a, bnd, act in bands_after if act]
+            if greens_after:
+                continue   # 新屏有绿按钮，回到循环开头去点
+            if diff < SWIPE_FP_DIFF or self._bands_same(bands, bands_after):
                 self.on_log(f"[总攻][{name}] 列表页已到底(fp_diff={diff:.1f})，"
                             f"共参与{clicks}条（{swipes}次翻页）")
                 return
@@ -469,15 +515,36 @@ class ZongGongMonitor:
 
     # ── 返回总攻页（自适应） ──
     def _return_to_map(self, name, engine):
-        """点左下角返回回到总攻页。每轮"截图判断→点击"，最多4轮。
+        """点左下角返回回到总攻页。每轮"截图判断→点击"，最多5轮。
 
+        每轮都要重新检测「总攻完成!」弹框：参加后弹框可能在任何时刻弹出来
+        盖住全屏，只按返回/点X会全部落在暗色遮罩上（11-06 实测卡死）。
         正常路径：返回键 → 直接回总攻页。
-        自适应：若实际落在聊天页（旧版行为），点底部X关闭。
+        自适应：列表页没有返回键 → 检测白色✕按实际位置点；
+                若落在聊天页（旧版行为）→ 点底部X。
         """
         returned = False
-        for attempt in range(4):
+        for attempt in range(5):
             frame = engine.screenshot()
             h, w = frame.shape[:2]
+            # 0. 弹框优先：盖住全屏时返回键/X 都点不到，必须先点确定
+            if self.tpl_done is not None:
+                ps, *_ = _match(frame, self.tpl_done,
+                                region=(int(w * 0.1), 0, int(w * 0.9), int(h * 0.4)))
+                if ps >= 0.68:
+                    self.on_log(f"[总攻][{name}] 返回途中弹出总攻完成弹框，先点确定")
+                    if self.tpl_ok is not None:
+                        oscore, ox, oy, ow, oh = _match(frame, self.tpl_ok,
+                                                        region=(int(w * 0.15), int(h * 0.75),
+                                                                int(w * 0.85), h))
+                        if oscore >= 0.60:
+                            engine.tap(ox + ow // 2, oy + oh // 2)
+                        else:
+                            engine.tap(int(w * 0.5), int(h * 0.845))
+                    else:
+                        engine.tap(int(w * 0.5), int(h * 0.845))
+                    time.sleep(1.2)
+                    continue
             # 已在总攻页（右下角聊天入口可见，且不是聊天窗页）→ 完成
             rs, *_ = _match(frame, self.tpl_chat,
                             region=(int(w * 0.76), int(h * 0.68), w, int(h * 0.88)))
@@ -486,7 +553,7 @@ class ZongGongMonitor:
                 if attempt:
                     self.on_log(f"[总攻][{name}] 已确认返回总攻页（操作了{attempt}次）")
                 break
-            # 返回键可见 → 在总攻详情/列表页，按返回
+            # 返回键可见 → 在总攻详情页，按返回
             bs, bxx, byy, bww, bhh = _match(frame, self.tpl_back,
                                             region=(0, int(h * 0.85), int(w * 0.25), h))
             if bs >= 0.60:
@@ -496,9 +563,17 @@ class ZongGongMonitor:
                 engine.tap(int(w * 0.5), int(h * 0.955))
                 self.on_log(f"[总攻][{name}] 落在聊天窗页，点X关闭（第{attempt + 1}次）")
             else:
-                # 其他未知页面也点X（比乱按返回安全）
-                engine.tap(int(w * 0.5), int(h * 0.955))
-                self.on_log(f"[总攻][{name}] 未知页面，点底部X（第{attempt + 1}次）")
+                # 列表页等无返回键页面：检测白色✕按实际位置点（✕中心~0.968h，
+                # 写死0.955h会点空——11-02踩坑，勿回退）
+                cx = self._find_close_x(frame)
+                if cx:
+                    engine.tap(cx[0], cx[1])
+                    self.on_log(f"[总攻][{name}] 检测到底部✕({cx[0]},{cx[1]})，"
+                                f"点击关闭（第{attempt + 1}次）")
+                else:
+                    engine.tap(int(w * 0.5), int(h * 0.968))
+                    self.on_log(f"[总攻][{name}] 未识别到✕，按默认位置点底部中央"
+                                f"（第{attempt + 1}次）")
             time.sleep(1.2)
         if not returned:
             # 卡死现场存图，方便事后定位
